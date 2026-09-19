@@ -1,10 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import ParticlesBackground from './components/ParticlesBackground';
 import LoginCard from './components/LoginCard';
 import ClientDashboard from './components/ClientDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import ClientMaintenanceScreen from './components/ClientMaintenanceScreen';
+import LiveHostingerModal from './components/LiveHostingerModal';
+import {
+  pingHostinger,
+  HostingerPingResponse
+} from './services/hostingerService';
 import {
   EmailAccount,
   UserSession,
@@ -111,6 +116,30 @@ export default function App() {
 
   const [adminClientPreview, setAdminClientPreview] = useState(false);
 
+  // Hostinger & GitHub Live Sync Monitoring
+  const [isLiveModalOpen, setIsLiveModalOpen] = useState(false);
+  const [liveHostingerData, setLiveHostingerData] = useState<HostingerPingResponse | null>(null);
+  const [isHostingerOnline, setIsHostingerOnline] = useState(false);
+  const [hostingerLatency, setHostingerLatency] = useState<number | undefined>(undefined);
+  const [lastHostingerCheck, setLastHostingerCheck] = useState<Date | null>(null);
+  const [isCheckingHostinger, setIsCheckingHostinger] = useState(false);
+
+  const checkHostingerConnection = useCallback(async () => {
+    setIsCheckingHostinger(true);
+    const res = await pingHostinger();
+    setIsHostingerOnline(res.online);
+    setLiveHostingerData(res.data);
+    setHostingerLatency(res.latencyMs);
+    setLastHostingerCheck(new Date());
+    setIsCheckingHostinger(false);
+  }, []);
+
+  useEffect(() => {
+    checkHostingerConnection();
+    const interval = setInterval(checkHostingerConnection, 45000);
+    return () => clearInterval(interval);
+  }, [checkHostingerConnection]);
+
   // Sync state to localStorage
   useEffect(() => {
     try {
@@ -206,6 +235,9 @@ export default function App() {
       <Header
         session={session}
         onLogout={handleLogout}
+        onOpenLiveModal={() => setIsLiveModalOpen(true)}
+        isHostingerOnline={isHostingerOnline}
+        latencyMs={hostingerLatency}
       />
 
       {/* Main Content Area */}
@@ -281,6 +313,17 @@ export default function App() {
           </div>
         </div>
       </footer>
+      {/* Live Hostinger & GitHub Sync Inspector Modal */}
+      <LiveHostingerModal
+        isOpen={isLiveModalOpen}
+        onClose={() => setIsLiveModalOpen(false)}
+        liveData={liveHostingerData}
+        isOnline={isHostingerOnline}
+        latencyMs={hostingerLatency}
+        lastChecked={lastHostingerCheck}
+        onRefresh={checkHostingerConnection}
+        isChecking={isCheckingHostinger}
+      />
     </div>
   );
 }

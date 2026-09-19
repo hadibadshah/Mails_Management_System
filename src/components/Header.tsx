@@ -1,12 +1,21 @@
-import { Shield, LogOut, KeyRound } from 'lucide-react';
+import { Shield, LogOut, KeyRound, Server, Activity } from 'lucide-react';
 import { UserSession } from '../types';
 
 interface HeaderProps {
   session: UserSession | null;
   onLogout: () => void;
+  onOpenLiveModal?: () => void;
+  isHostingerOnline?: boolean;
+  latencyMs?: number;
 }
 
-export default function Header({ session, onLogout }: HeaderProps) {
+export default function Header({
+  session,
+  onLogout,
+  onOpenLiveModal,
+  isHostingerOnline,
+  latencyMs
+}: HeaderProps) {
   return (
     <header
       id="main-app-header"
@@ -30,8 +39,34 @@ export default function Header({ session, onLogout }: HeaderProps) {
           </div>
         </div>
 
-        {/* Right action controls */}
+        {/* Center/Right Live Hostinger Sync Pill */}
         <div className="flex items-center space-x-3">
+          {onOpenLiveModal && (
+            <button
+              onClick={onOpenLiveModal}
+              title="Click to inspect Hostinger & GitHub Live Sync"
+              className={`px-3 py-1.5 rounded-xl border text-xs font-mono flex items-center space-x-2 transition cursor-pointer shadow-sm ${
+                isHostingerOnline
+                  ? 'bg-emerald-950/40 hover:bg-emerald-900/50 border-emerald-500/40 text-emerald-300'
+                  : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300'
+              }`}
+            >
+              <span className="relative flex h-2 w-2">
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isHostingerOnline ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${isHostingerOnline ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+              </span>
+              <span className="hidden sm:inline">
+                {isHostingerOnline ? 'Hostinger Live: asim' : 'Hostinger Sync'}
+              </span>
+              {latencyMs !== undefined && latencyMs > 0 && (
+                <span className="text-[10px] text-cyan-400 font-bold hidden md:inline">
+                  {latencyMs}ms
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Right action controls */}
           {session ? (
             <div className="flex items-center space-x-3">
               <div className="text-right hidden sm:block">

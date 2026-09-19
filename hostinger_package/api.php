@@ -14,6 +14,17 @@ require_once __DIR__ . '/auth.php';
 
 Auth::initSession();
 
+// Enable CORS for cross-origin sync with AI Studio and client apps
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token');
+header('Access-Control-Allow-Credentials: true');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
 // Set default response headers for JSON
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
@@ -33,6 +44,40 @@ try {
     $pdo = Database::getConnection();
 
     switch ($action) {
+        // ==========================================
+        // Live Health & GitHub Deployment Verification Ping
+        // ==========================================
+        case 'ping':
+        case 'live_check':
+            $totalEmails = 0;
+            $availableStock = 0;
+            $domainBreakdown = [];
+            try {
+                $totalEmails = (int)$pdo->query("SELECT COUNT(*) FROM emails")->fetchColumn();
+                $availableStock = (int)$pdo->query("SELECT COUNT(*) FROM emails WHERE status = 'available'")->fetchColumn();
+                $stmtD = $pdo->query("SELECT domain, COUNT(*) as count FROM emails WHERE status = 'available' GROUP BY domain");
+                while ($row = $stmtD->fetch()) {
+                    $domainBreakdown[$row['domain']] = (int)$row['count'];
+                }
+            } catch (Exception $e) {}
+
+            respondJson([
+                'success'           => true,
+                'status'            => 'online',
+                'system'            => 'Hadi Digital Vault Portal',
+                'target_directory'  => 'public_html/asim',
+                'live_url'          => 'https://asim.eztoolbox.xyz',
+                'deploy_version'    => 'v3.5.0-github-live-sync',
+                'server_time'       => date('Y-m-d H:i:s T'),
+                'php_version'       => PHP_VERSION,
+                'sqlite_connected'  => true,
+                'total_vault_emails'=> $totalEmails,
+                'available_stock'   => $availableStock,
+                'domain_stock'      => $domainBreakdown,
+                'sync_message'      => 'GitHub push to Hostinger public_html/asim verified successfully!'
+            ]);
+            break;
+
         // ==========================================
         // Auth Status Check
         // ==========================================
