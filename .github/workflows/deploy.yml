@@ -1,0 +1,49 @@
+name: Deploy to Hostinger via FTP
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy to Hostinger
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci || npm install
+
+      - name: 🏗️ Verify Build
+        run: npm run build
+
+      - name: 🚀 Sync Files to Hostinger (public_html/asim/)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_SERVER }}
+          username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          port: 21
+          server-dir: 'public_html/asim/'
+          local-dir: './hostinger_package/'
+          dangerous-clean-slate: false # Never delete existing database or files on server!
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/db/vault_data.sqlite
+            **/db/vault_data.sqlite-journal
+            **/db/*.sqlite*
+            **/README.md

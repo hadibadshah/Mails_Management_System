@@ -1,0 +1,6 @@
+{
+  "name": "Hadi Digital",
+  "description": "Hadi Digital - Portal for email accounts stock management, secure PIN extraction, order history, and instant replacements.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
