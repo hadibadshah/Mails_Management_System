@@ -2373,7 +2373,7 @@ $csrfToken = Auth::getCsrfToken();
                         await this.loadAdminAccounts();
                         await this.refreshStock();
                         await this.loadAdminStats();
-                        await this.loadFinancialSummary();
+                        await this.loadKhataData();
                     } else {
                         Swal.fire({ customClass: { popup: 'cyber-swal' }, icon: 'error', title: 'Error', text: data.message || 'Failed to update status.' });
                     }
@@ -2431,7 +2431,7 @@ $csrfToken = Auth::getCsrfToken();
                         await this.loadAdminAccounts();
                         await this.refreshStock();
                         await this.loadAdminStats();
-                        await this.loadFinancialSummary();
+                        await this.loadKhataData();
                     } else {
                         Swal.fire({ customClass: { popup: 'cyber-swal' }, icon: 'error', title: 'Error', text: data.message || 'Failed to delete account.' });
                     }
@@ -2687,7 +2687,8 @@ $csrfToken = Auth::getCsrfToken();
                         const formData = new FormData();
                         if (this.pendingStockUpload.file) {
                             formData.append('csv_file', this.pendingStockUpload.file);
-                        } else {
+                        }
+                        if (this.pendingStockUpload.rawText) {
                             formData.append('csv_text', this.pendingStockUpload.rawText);
                         }
                         formData.append('target_status', 'make_available');
@@ -2698,6 +2699,9 @@ $csrfToken = Auth::getCsrfToken();
                             body: formData
                         });
                         const data = await res.json();
+                        if (data.csrf_token) {
+                            this.csrfToken = data.csrf_token;
+                        }
 
                         if (data.success) {
                             this.closeStockAllocationModal();
@@ -2722,8 +2726,8 @@ $csrfToken = Auth::getCsrfToken();
                                 `
                             });
 
-                            await this.loadAdminData();
-                            await this.loadFinancialSummary();
+                            try { await this.loadAdminData(); } catch(e) { console.warn('Refresh admin data error:', e); }
+                            try { await this.loadKhataData(); } catch(e) { console.warn('Refresh khata error:', e); }
                         } else {
                             Swal.fire({
                                 customClass: { popup: 'cyber-swal' },
@@ -2744,7 +2748,8 @@ $csrfToken = Auth::getCsrfToken();
                         const formData = new FormData();
                         if (this.pendingStockUpload.file) {
                             formData.append('csv_file', this.pendingStockUpload.file);
-                        } else {
+                        }
+                        if (this.pendingStockUpload.rawText) {
                             formData.append('csv_text', this.pendingStockUpload.rawText);
                         }
                         formData.append('order_number', orderNum);
@@ -2760,6 +2765,9 @@ $csrfToken = Auth::getCsrfToken();
                             body: formData
                         });
                         const data = await res.json();
+                        if (data.csrf_token) {
+                            this.csrfToken = data.csrf_token;
+                        }
 
                         if (data.success) {
                             this.closeStockAllocationModal();
@@ -2784,9 +2792,9 @@ $csrfToken = Auth::getCsrfToken();
                                 `
                             });
 
-                            await this.loadAdminData();
-                            await this.loadOrders();
-                            await this.loadFinancialSummary();
+                            try { await this.loadAdminData(); } catch(e) { console.warn('Refresh admin data error:', e); }
+                            try { await this.loadOrders(); } catch(e) { console.warn('Refresh orders error:', e); }
+                            try { await this.loadKhataData(); } catch(e) { console.warn('Refresh khata error:', e); }
                         } else {
                             Swal.fire({
                                 customClass: { popup: 'cyber-swal' },
@@ -2797,11 +2805,12 @@ $csrfToken = Auth::getCsrfToken();
                         }
                     }
                 } catch (err) {
+                    console.error('Allocation error:', err);
                     Swal.fire({
                         customClass: { popup: 'cyber-swal' },
                         icon: 'error',
                         title: 'Error',
-                        text: 'Server communication error during allocation.'
+                        text: err?.message ? `Allocation error: ${err.message}` : 'Server communication error during allocation.'
                     });
                 } finally {
                     if (btn) {
@@ -2981,6 +2990,10 @@ $csrfToken = Auth::getCsrfToken();
             // ==========================================
             // Khata & Financial Ledger Sync
             // ==========================================
+            loadFinancialSummary: async function() {
+                return await this.loadKhataData();
+            },
+
             loadKhataData: async function() {
                 try {
                     const res = await fetch('api.php?action=financial_summary');

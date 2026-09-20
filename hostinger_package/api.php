@@ -6,6 +6,10 @@
 
 declare(strict_types=1);
 
+// Prevent PHP warnings/notices from prepending HTML to JSON responses
+ini_set('display_errors', '0');
+error_reporting(E_ALL);
+
 define('VAULT_APP', true);
 
 require_once __DIR__ . '/config.php';
@@ -48,6 +52,9 @@ if ($action !== 'download_file') {
 
 // Error helper
 function respondJson(array $data, int $statusCode = 200): void {
+    if (!isset($data['csrf_token'])) {
+        $data['csrf_token'] = Auth::getCsrfToken();
+    }
     http_response_code($statusCode);
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
