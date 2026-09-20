@@ -71,13 +71,42 @@ class HostingerBridge {
         cookie = loginRes.headers['set-cookie'][0].split(';')[0];
       }
 
+      try {
+        const lJson = JSON.parse(loginRes.data);
+        if (lJson && lJson.csrf_token) {
+          csrf = lJson.csrf_token;
+        }
+      } catch {
+        // ignore
+      }
+
       this.cookie = cookie;
+      this.csrfToken = csrf;
       this.lastLogin = Date.now();
+
+      // Ensure fresh CSRF from authenticated status
+      await this.refreshCsrf(cookie);
+
       return this.cookie;
     } catch (err) {
       console.warn('Authentication to Hostinger failed:', err);
       return this.cookie;
     }
+  }
+
+  async refreshCsrf(cookie: string): Promise<string> {
+    try {
+      const statusRes = await this.request('/api.php?action=status', {
+        headers: { 'Cookie': cookie }
+      });
+      const sJson = JSON.parse(statusRes.data);
+      if (sJson && sJson.csrf_token) {
+        this.csrfToken = sJson.csrf_token;
+      }
+    } catch {
+      // ignore
+    }
+    return this.csrfToken;
   }
 
   async getLiveSync(): Promise<any> {
@@ -220,11 +249,12 @@ class HostingerBridge {
 
   async setMaintenance(enabled: boolean, message: string): Promise<any> {
     const cookie = await this.ensureAuthenticated();
+    await this.refreshCsrf(cookie);
     const body = 'csrf_token=' + encodeURIComponent(this.csrfToken) +
                  '&enabled=' + (enabled ? '1' : '0') +
                  '&message=' + encodeURIComponent(message);
 
-    const res = await this.request('/api.php?action=toggle_maintenance', {
+    const res = await this.request('/api.php?action=set_maintenance_mode', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -233,14 +263,31 @@ class HostingerBridge {
     }, body);
 
     try {
-      return JSON.parse(res.data);
+      const parsed = JSON.parse(res.data);
+      if (!parsed.success && parsed.message && parsed.message.toLowerCase().includes('token')) {
+        this.cookie = '';
+        const newCookie = await this.ensureAuthenticated();
+        const retryBody = 'csrf_token=' + encodeURIComponent(this.csrfToken) +
+                          '&enabled=' + (enabled ? '1' : '0') +
+                          '&message=' + encodeURIComponent(message);
+        const retryRes = await this.request('/api.php?action=set_maintenance_mode', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': newCookie
+          }
+        }, retryBody);
+        return JSON.parse(retryRes.data);
+      }
+      return parsed;
     } catch {
-      return { success: res.statusCode === 200 };
+      return { success: res.statusCode === 200, raw: res.data };
     }
   }
 
   async callAction(action: string, data: any = {}): Promise<any> {
     const cookie = await this.ensureAuthenticated();
+    await this.refreshCsrf(cookie);
     const params = new URLSearchParams();
     params.append('csrf_token', this.csrfToken);
     if (data && typeof data === 'object') {
@@ -264,7 +311,21 @@ class HostingerBridge {
     }, body);
 
     try {
-      return JSON.parse(res.data);
+      const parsed = JSON.parse(res.data);
+      if (!parsed.success && parsed.message && parsed.message.toLowerCase().includes('token')) {
+        this.cookie = '';
+        const newCookie = await this.ensureAuthenticated();
+        params.set('csrf_token', this.csrfToken);
+        const retryRes = await this.request(`/api.php?action=${encodeURIComponent(action)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': newCookie
+          }
+        }, params.toString());
+        return JSON.parse(retryRes.data);
+      }
+      return parsed;
     } catch {
       return { success: res.statusCode === 200, raw: res.data };
     }

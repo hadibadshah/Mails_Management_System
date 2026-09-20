@@ -740,10 +740,21 @@ try {
             }
 
             if (Auth::isAdmin()) {
-                $ordersStmt = $pdo->query("SELECT * FROM orders ORDER BY datetime(created_at) DESC, id DESC");
+                $ordersStmt = $pdo->query("
+                    SELECT * FROM orders 
+                    ORDER BY CASE WHEN INSTR(order_number, '#') > 0 
+                                  THEN CAST(SUBSTR(order_number, INSTR(order_number, '#') + 1) AS INTEGER) 
+                                  ELSE id END ASC, id ASC
+                ");
             } else {
                 $clientUser = Auth::user()['username'] ?? '';
-                $ordersStmt = $pdo->prepare("SELECT * FROM orders WHERE client_username = ? ORDER BY datetime(created_at) DESC, id DESC");
+                $ordersStmt = $pdo->prepare("
+                    SELECT * FROM orders 
+                    WHERE client_username = ? 
+                    ORDER BY CASE WHEN INSTR(order_number, '#') > 0 
+                                  THEN CAST(SUBSTR(order_number, INSTR(order_number, '#') + 1) AS INTEGER) 
+                                  ELSE id END ASC, id ASC
+                ");
                 $ordersStmt->execute([$clientUser]);
             }
 
@@ -2092,6 +2103,7 @@ try {
             break;
 
         case 'set_maintenance_mode':
+        case 'toggle_maintenance':
             if (!Auth::isAdmin()) {
                 respondJson(['success' => false, 'message' => 'Admin authorization required.'], 403);
             }

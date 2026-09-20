@@ -95,3 +95,17 @@ export interface MaintenanceSettings {
   message: string;
 }
 
+export function sortOrdersNaturally<T extends { order_number?: string; id?: number | string }>(ordersList: T[]): T[] {
+  return [...ordersList].sort((a, b) => {
+    const parseNum = (item: T) => {
+      if (item.order_number) {
+        const match = item.order_number.match(/\d+/);
+        if (match) return parseInt(match[0], 10);
+      }
+      const idNum = Number(item.id);
+      return isNaN(idNum) ? 999999 : idNum;
+    };
+    return parseNum(a) - parseNum(b);
+  });
+}
+

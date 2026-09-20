@@ -19,7 +19,8 @@ import {
   OrderRecord,
   PaymentRecord,
   ReplacementRecord,
-  MaintenanceSettings
+  MaintenanceSettings,
+  sortOrdersNaturally
 } from './types';
 import { INITIAL_EMAIL_ACCOUNTS, INITIAL_ORDERS } from './data/constants';
 import { cyberAlertSuccess } from './utils/cyberSwal';
@@ -74,11 +75,11 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_ORDERS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return sortOrdersNaturally(parsed);
       }
-      return INITIAL_ORDERS;
+      return sortOrdersNaturally(INITIAL_ORDERS);
     } catch {
-      return INITIAL_ORDERS;
+      return sortOrdersNaturally(INITIAL_ORDERS);
     }
   });
 
@@ -251,7 +252,7 @@ export default function App() {
           setAccounts(res.accounts);
         }
         if (Array.isArray(res.orders) && res.orders.length > 0) {
-          setOrders(res.orders);
+          setOrders(sortOrdersNaturally(res.orders));
         }
         if (Array.isArray(res.payments)) {
           setPayments(res.payments);
@@ -345,21 +346,53 @@ export default function App() {
 
         {session && session.role === 'admin' && (
           adminClientPreview ? (
-            <ClientDashboard
-              accounts={accounts}
-              orders={orders}
-              payments={payments}
-              replacements={replacements}
-              onAccountsUpdate={setAccounts}
-              onOrdersUpdate={setOrders}
-              onAddLog={addLog}
-              isAdminPreview={true}
-              onExitAdminPreview={() => setAdminClientPreview(false)}
-              maintenanceMode={maintenance.enabled}
-              onToggleMaintenance={(enabled) =>
-                setMaintenance((prev) => ({ ...prev, enabled }))
-              }
-            />
+            maintenance.enabled ? (
+              <div className="space-y-4">
+                <div className="bg-amber-950/60 border border-amber-500/40 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg shadow-amber-950/30">
+                  <div className="flex items-center space-x-3 text-amber-300 text-xs font-mono">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0"></span>
+                    <div>
+                      <span className="font-bold uppercase tracking-wider block text-amber-200">Admin Testing Preview Active</span>
+                      <span className="text-amber-300/80 text-[11px]">Client Portal Maintenance Mode ON hai — Aam clients ko yeh screen dikh rahi hai aur portal block hai.</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2 shrink-0">
+                    <button
+                      onClick={() => handleUpdateMaintenance({ enabled: false, message: maintenance.message })}
+                      className="px-3.5 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs rounded-xl font-mono transition-all font-bold cursor-pointer shadow-sm"
+                    >
+                      Turn Maintenance OFF (Make Live)
+                    </button>
+                    <button
+                      onClick={() => setAdminClientPreview(false)}
+                      className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-xl font-mono transition-all cursor-pointer"
+                    >
+                      Exit Preview
+                    </button>
+                  </div>
+                </div>
+                <ClientMaintenanceScreen
+                  message={maintenance.message}
+                  onLogout={() => setAdminClientPreview(false)}
+                />
+              </div>
+            ) : (
+              <ClientDashboard
+                accounts={accounts}
+                orders={orders}
+                payments={payments}
+                replacements={replacements}
+                onAccountsUpdate={setAccounts}
+                onOrdersUpdate={setOrders}
+                onAddLog={addLog}
+                isAdminPreview={true}
+                onExitAdminPreview={() => setAdminClientPreview(false)}
+                maintenanceMode={maintenance.enabled}
+                onToggleMaintenance={(enabled) =>
+                  handleUpdateMaintenance({ ...maintenance, enabled })
+                }
+              />
+            )
           ) : (
             <AdminDashboard
               accounts={accounts}

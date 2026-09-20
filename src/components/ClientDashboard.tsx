@@ -18,7 +18,7 @@ import {
   RefreshCw,
   FileText
 } from 'lucide-react';
-import { EmailAccount, ExportFormat, OrderRecord, ExtractedEmailItem, PaymentRecord, ReplacementRecord } from '../types';
+import { EmailAccount, ExportFormat, OrderRecord, ExtractedEmailItem, PaymentRecord, ReplacementRecord, sortOrdersNaturally } from '../types';
 import { SECURE_EXTRACTION_PIN, MANAGED_DOMAINS } from '../data/constants';
 import { cyberAlertError, cyberAlertSuccess, cyberPromptPin } from '../utils/cyberSwal';
 
@@ -92,7 +92,7 @@ export default function ClientDashboard({
     return o.status !== 'reverted' && o.status !== 'cancelled' && !o.notes?.includes('[REVERTED TO AVAILABLE STOCK]');
   };
 
-  const activeDeliveredOrders = orders.filter(isOrderDelivered);
+  const activeDeliveredOrders = sortOrdersNaturally(orders.filter(isOrderDelivered));
   // Live Stock Math: totalDeliveredMails counts downloaded or replaced accounts
   const totalDeliveredMails = accounts.filter((a) => a.status === 'downloaded' || a.status === 'replaced').length;
   const replacedMailsCount = replacements.length > 0

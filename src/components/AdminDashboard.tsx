@@ -39,7 +39,8 @@ import {
   ExportFormat,
   PaymentRecord,
   ReplacementRecord,
-  MaintenanceSettings
+  MaintenanceSettings,
+  sortOrdersNaturally
 } from '../types';
 import { SAMPLE_CSV_DATA, MANAGED_DOMAINS } from '../data/constants';
 import { cyberAlertError, cyberAlertSuccess } from '../utils/cyberSwal';
@@ -365,6 +366,35 @@ export default function AdminDashboard({
       } else {
         // INGEST AS SOLD ORDER
         const finalDate = allocOrderDate ? allocOrderDate.replace('T', ' ') + ':00' : nowStr;
+        const orderNum = allocOrderNumber.trim() || `Order #${orders.length + 1}`;
+        const incomingEmailsSet = new Set<string>(parsedUploadAccounts.map((a) => a.email.toLowerCase().trim()));
+
+        // Check 1: Duplicate order number detection
+        const duplicateByName = orders.find((o) => o.order_number.toLowerCase().trim() === orderNum.toLowerCase());
+        if (duplicateByName) {
+          cyberAlertError(
+            'Duplicate Order Number',
+            `"${orderNum}" pehle se mojood hai. Double billing se bachane ke liye duplicate order add nahi kiya gaya.`
+          );
+          return;
+        }
+
+        // Check 2: All accounts already belong to an existing order
+        const duplicateByAccounts = orders.find((o) => {
+          if (!Array.isArray(o.accounts) || o.accounts.length === 0) return false;
+          const oSet = new Set(o.accounts.map((a) => a.email.toLowerCase().trim()));
+          if (oSet.size !== incomingEmailsSet.size) return false;
+          return Array.from(incomingEmailsSet).every((em) => oSet.has(em));
+        });
+
+        if (duplicateByAccounts) {
+          cyberAlertError(
+            'Duplicate Accounts Warning',
+            `Is CSV ki tamam ${incomingEmailsSet.size} emails pehle se "${duplicateByAccounts.order_number}" me darj hain. Client ko double billing se bachane ke liye duplicate order create nahi kiya gaya.`
+          );
+          return;
+        }
+
         const orderItems: ExtractedEmailItem[] = [];
 
         for (const item of parsedUploadAccounts) {
@@ -410,7 +440,6 @@ export default function AdminDashboard({
         const primaryDomain = parsedUploadAccounts[0]?.domain || 'basis5.ch';
         const orderRate = Number(allocOrderRate) || 18;
         const orderTotal = parsedUploadAccounts.length * orderRate;
-        const orderNum = allocOrderNumber.trim() || `Order #${orders.length + 1}`;
 
         const newOrder: OrderRecord = {
           id: Date.now(),
@@ -839,11 +868,39 @@ export default function AdminDashboard({
       return;
     }
 
+    const orderNum = orderModalNumber.trim();
+    // Check 1: Duplicate order number
+    const duplicateByName = orders.find((o) => o.order_number.toLowerCase().trim() === orderNum.toLowerCase());
+    if (duplicateByName) {
+      cyberAlertError(
+        'Duplicate Order Number',
+        `"${orderNum}" pehle se mojood hai. Double billing se bachane ke liye duplicate order add nahi kiya gaya.`
+      );
+      return;
+    }
+
+    // Check 2: Duplicate accounts
+    const incomingEmailsSet = new Set<string>(items.map((a) => a.email.toLowerCase().trim()));
+    const duplicateByAccounts = orders.find((o) => {
+      if (!Array.isArray(o.accounts) || o.accounts.length === 0) return false;
+      const oSet = new Set(o.accounts.map((a) => a.email.toLowerCase().trim()));
+      if (oSet.size !== incomingEmailsSet.size) return false;
+      return Array.from(incomingEmailsSet).every((em) => oSet.has(em));
+    });
+
+    if (duplicateByAccounts) {
+      cyberAlertError(
+        'Duplicate Accounts Warning',
+        `Is CSV ki tamam emails pehle se "${duplicateByAccounts.order_number}" me darj hain. Double billing se bachane ke liye duplicate order add nahi kiya gaya.`
+      );
+      return;
+    }
+
     const qty = items.length;
     const rate = orderModalRate || 18;
     const newOrd: OrderRecord = {
       id: Date.now(),
-      order_number: orderModalNumber.trim(),
+      order_number: orderNum,
       client_username: 'rana asim',
       domain: orderModalDomain,
       quantity: qty,
@@ -1935,7 +1992,7 @@ export default function AdminDashboard({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/30">
-                    {orders.map((ord) => {
+                    {sortOrdersNaturally(orders).map((ord) => {
                       const rate = ord.rate_per_mail !== undefined ? ord.rate_per_mail : 18;
                       const total = ord.total_price !== undefined ? ord.total_price : (ord.quantity * rate);
                       const isReverted = (ord.status && (ord.status === 'reverted' || ord.status === 'cancelled')) || !!(ord.notes && ord.notes.includes('[REVERTED TO AVAILABLE STOCK]'));

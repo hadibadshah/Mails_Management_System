@@ -1771,15 +1771,23 @@ $csrfToken = Auth::getCsrfToken();
                     if (this.isAdminClientPreview) {
                         // Admin testing the client view
                         document.getElementById('view-admin').classList.add('hidden');
-                        document.getElementById('view-maintenance').classList.add('hidden');
-                        document.getElementById('view-client').classList.remove('hidden');
                         document.getElementById('client-admin-test-banner').classList.remove('hidden');
                         this.updatePreviewBannerStatus();
-                        this.refreshStock();
-                        this.loadOrders();
-                        this.loadKhataData();
-                        this.loadPayments();
-                        this.loadReplacements();
+
+                        if (this.maintenanceMode === '1') {
+                            document.getElementById('view-client').classList.add('hidden');
+                            document.getElementById('view-maintenance').classList.remove('hidden');
+                            const msgEl = document.getElementById('maintenance-client-message');
+                            if (msgEl) msgEl.innerText = this.maintenanceMessage;
+                        } else {
+                            document.getElementById('view-maintenance').classList.add('hidden');
+                            document.getElementById('view-client').classList.remove('hidden');
+                            this.refreshStock();
+                            this.loadOrders();
+                            this.loadKhataData();
+                            this.loadPayments();
+                            this.loadReplacements();
+                        }
                         return;
                     }
 
@@ -2846,7 +2854,11 @@ $csrfToken = Auth::getCsrfToken();
                     const data = await res.json();
                     if (!data.success) return;
 
-                    this.allOrders = data.orders || [];
+                    this.allOrders = (data.orders || []).sort((a, b) => {
+                        const numA = (a.order_number && a.order_number.match(/\d+/)) ? parseInt(a.order_number.match(/\d+/)[0], 10) : Number(a.id || 999999);
+                        const numB = (b.order_number && b.order_number.match(/\d+/)) ? parseInt(b.order_number.match(/\d+/)[0], 10) : Number(b.id || 999999);
+                        return numA - numB;
+                    });
 
                     if (this.user && this.user.role === 'admin') {
                         this.renderAdminOrders();
