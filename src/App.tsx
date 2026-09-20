@@ -22,7 +22,7 @@ import {
   MaintenanceSettings,
   sortOrdersNaturally
 } from './types';
-import { INITIAL_EMAIL_ACCOUNTS, INITIAL_ORDERS } from './data/constants';
+import { INITIAL_EMAIL_ACCOUNTS, INITIAL_ORDERS, INITIAL_REPLACEMENTS } from './data/constants';
 import { cyberAlertSuccess } from './utils/cyberSwal';
 
 const STORAGE_ACCOUNTS_KEY = 'hadi_digital_accounts_v4';
@@ -95,9 +95,13 @@ export default function App() {
   const [replacements, setReplacements] = useState<ReplacementRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_REPLACEMENTS_KEY);
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return INITIAL_REPLACEMENTS;
     } catch {
-      return [];
+      return INITIAL_REPLACEMENTS;
     }
   });
 

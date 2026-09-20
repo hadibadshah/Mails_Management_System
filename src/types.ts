@@ -77,6 +77,8 @@ export interface ReplacementRecord {
   rate_deduction: number;
   reason: string;
   created_at: string;
+  password?: string;
+  recovery_email?: string;
 }
 
 export interface FinancialSummary {

@@ -1,5 +1,6 @@
-import { EmailAccount, OrderRecord } from '../types';
-import { REAL_HOSTINGER_ACCOUNTS, REAL_HOSTINGER_ORDERS } from './liveHostingerData';
+import { EmailAccount, OrderRecord, ReplacementRecord } from '../types';
+import { REAL_HOSTINGER_ACCOUNTS } from './liveHostingerData';
+import { REAL_HOSTINGER_ORDERS, REAL_HOSTINGER_REPLACEMENTS } from './liveOrdersAndReps';
 
 export const ADMIN_USERNAME = 'Hadi';
 export const ADMIN_PASSWORD = '91199119';
@@ -22,3 +23,4 @@ beta_02@adlover.site,CyberSec!202,sec_rec2@yahoo.com
 beta_03@adlover.site,CyberSec!203,sec_rec3@yahoo.com`;
 
 export const INITIAL_ORDERS: OrderRecord[] = REAL_HOSTINGER_ORDERS;
+export const INITIAL_REPLACEMENTS: ReplacementRecord[] = REAL_HOSTINGER_REPLACEMENTS;

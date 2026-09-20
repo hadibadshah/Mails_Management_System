@@ -667,8 +667,8 @@ try {
                     COALESCE(SUM(total_price), 0) as total_order_billed,
                     AVG(rate_per_mail) as avg_rate
                 FROM orders
-                WHERE (status != 'reverted' AND status != 'cancelled' OR status IS NULL OR status = '')
-                  AND notes NOT LIKE '%[REVERTED TO AVAILABLE STOCK]%'
+                WHERE (status IS NULL OR (status != 'reverted' AND status != 'cancelled'))
+                  AND (notes IS NULL OR notes NOT LIKE '%[REVERTED TO AVAILABLE STOCK]%')
             ")->fetch();
 
             if (!empty($orderStats['avg_rate']) && (float)$orderStats['avg_rate'] > 0) {
@@ -1706,6 +1706,8 @@ try {
             $orderStats = $pdo->query("
                 SELECT COUNT(*) as total_orders, COALESCE(SUM(quantity), 0) as gross_sold_mails, COALESCE(SUM(total_price), 0) as gross_billed_amount
                 FROM orders
+                WHERE (status IS NULL OR (status != 'reverted' AND status != 'cancelled'))
+                  AND (notes IS NULL OR notes NOT LIKE '%[REVERTED TO AVAILABLE STOCK]%')
             ")->fetch();
             $grossSold = (int)($orderStats['gross_sold_mails'] ?? 0);
             $grossBilled = (float)($orderStats['gross_billed_amount'] ?? 0);

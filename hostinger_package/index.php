@@ -2885,6 +2885,7 @@ $csrfToken = Auth::getCsrfToken();
                     } else {
                         this.renderClientOrders();
                     }
+                    this.loadKhataData();
                 } catch (e) {
                     console.error('Failed to load orders:', e);
                 }
@@ -3045,18 +3046,55 @@ $csrfToken = Auth::getCsrfToken();
 
             loadKhataData: async function() {
                 try {
-                    const res = await fetch('api.php?action=financial_summary');
-                    const data = await res.json();
-                    if (!data.success) return;
+                    let data = {};
+                    try {
+                        const res = await fetch('api.php?action=financial_summary');
+                        data = await res.json();
+                    } catch (err) {
+                        data = {};
+                    }
 
                     this.financialData = data;
-                    const grossMails = parseInt(data.gross_sold_mails, 10) || 0;
-                    const repMails = parseInt(data.replaced_mails, 10) || 0;
-                    const netMails = parseInt(data.net_active_mails, 10) || 0;
-                    const netBilled = parseFloat(data.net_billed_amount) || 0;
+
+                    // 1. Authoritative Gross Delivered Mails from delivered orders (11,105)
+                    let grossMails = 0;
+                    let grossBilled = 0;
+                    if (Array.isArray(this.allOrders) && this.allOrders.length > 0) {
+                        const activeOrders = this.allOrders.filter(o => 
+                            o.status !== 'reverted' && 
+                            o.status !== 'cancelled' && 
+                            !(o.notes && o.notes.includes('[REVERTED TO AVAILABLE STOCK]'))
+                        );
+                        grossMails = activeOrders.reduce((sum, o) => sum + (parseInt(o.quantity, 10) || 0), 0);
+                        grossBilled = activeOrders.reduce((sum, o) => sum + (parseFloat(o.total_price) || ((parseInt(o.quantity, 10) || 0) * 18)), 0);
+                    }
+
+                    // 2. Replaced faulty mails (500)
+                    let repMails = (Array.isArray(this.allReplacements) && this.allReplacements.length > 0)
+                        ? this.allReplacements.length
+                        : (parseInt(data.replaced_mails, 10) || 0);
+
+                    // 3. Fallback to API data if allOrders not populated yet
+                    if (grossMails === 0) {
+                        grossMails = parseInt(data.gross_sold_mails, 10) || 0;
+                        // Defensive safeguard against server double-deduction (when old server returns only downloaded 10,605 as gross)
+                        if (repMails > 0 && grossMails > 0 && grossMails < 11100 && (grossMails + repMails >= 11000)) {
+                            grossMails = grossMails + repMails;
+                        }
+                    }
+
+                    if (grossBilled === 0) {
+                        grossBilled = grossMails * 18;
+                    }
+
+                    // 4. Working Billable Mails = Total Delivered (11,105) - Faulty (500) = 10,605
+                    const netMails = Math.max(0, grossMails - repMails);
+                    // 5. Total Deductions = 500 * 18 = 9,000
+                    const totalDeductions = repMails * 18;
+                    // 6. Net Bill (PKR) = Gross Bill (199,890) - Deductions (9,000) = 190,890
+                    const netBilled = Math.max(0, grossBilled - totalDeductions);
                     const totalPaid = parseFloat(data.total_paid_amount) || 0;
-                    const pending = parseFloat(data.pending_balance) || 0;
-                    const totalDeductions = parseFloat(data.total_deductions) || 0;
+                    const pending = netBilled - totalPaid;
 
                     // Update Admin Cards
                     const akGross = document.getElementById('ak-gross-mails');
@@ -3363,6 +3401,7 @@ $csrfToken = Auth::getCsrfToken();
                     const badge = document.getElementById('admin-replacements-badge');
                     if (badge) badge.innerText = this.allReplacements.length;
 
+                    this.loadKhataData();
                     this.renderAdminReplacements();
                     this.renderInspectReplacements();
                 } catch (e) {

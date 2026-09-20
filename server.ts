@@ -132,16 +132,20 @@ class HostingerBridge {
         // Fall back to legacy multi-endpoint aggregation
       }
 
-      // 2. Legacy fallback: Stock + Orders
-      const [stockRes, ordersRes, statusRes] = await Promise.all([
+      // 2. Legacy fallback: Stock + Orders + Replacements + Payments
+      const [stockRes, ordersRes, statusRes, repsRes, payRes] = await Promise.all([
         this.request('/api.php?action=stock', { headers: { 'Cookie': cookie } }).catch(() => null),
         this.request('/api.php?action=orders', { headers: { 'Cookie': cookie } }).catch(() => null),
-        this.request('/api.php?action=status', { headers: { 'Cookie': cookie } }).catch(() => null)
+        this.request('/api.php?action=status', { headers: { 'Cookie': cookie } }).catch(() => null),
+        this.request('/api.php?action=list_replacements', { headers: { 'Cookie': cookie } }).catch(() => null),
+        this.request('/api.php?action=list_payments', { headers: { 'Cookie': cookie } }).catch(() => null)
       ]);
 
       let stockData: any = null;
       let ordersData: any[] = [];
       let maintenanceData = { enabled: false, message: '' };
+      let replacementsData: any[] = [];
+      let paymentsData: any[] = [];
 
       if (stockRes && stockRes.data) {
         try {
@@ -173,6 +177,29 @@ class HostingerBridge {
         }
       }
 
+      if (repsRes && repsRes.data) {
+        try {
+          const r = JSON.parse(repsRes.data);
+          replacementsData = r.replacements || [];
+        } catch {
+          // ignore
+        }
+      }
+
+      if (payRes && payRes.data) {
+        try {
+          const p = JSON.parse(payRes.data);
+          paymentsData = p.payments || [];
+        } catch {
+          // ignore
+        }
+      }
+
+      // Build replaced email lookup set
+      const replacedEmailSet = new Set<string>(
+        replacementsData.map((r: any) => (r.email || '').toLowerCase().trim()).filter(Boolean)
+      );
+
       // Flatten accounts from orders (deduplicate by email to avoid double counting)
       const extractedAccounts: any[] = [];
       const seenAccountEmails = new Set<string>();
@@ -188,7 +215,7 @@ class HostingerBridge {
                 password: acc.password || 'VaultP@ss101',
                 recovery_email: acc.recovery_email || '',
                 domain: order.domain || 'basis5.ch',
-                status: 'downloaded',
+                status: replacedEmailSet.has(em) ? 'replaced' : 'downloaded',
                 created_at: order.created_at,
                 downloaded_at: order.created_at
               });
@@ -205,6 +232,8 @@ class HostingerBridge {
         stock: stockData,
         orders: ordersData,
         accounts: extractedAccounts,
+        replacements: replacementsData,
+        payments: paymentsData,
         maintenance: maintenanceData
       };
     } catch (err: any) {

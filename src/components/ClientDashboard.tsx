@@ -93,22 +93,22 @@ export default function ClientDashboard({
   };
 
   const activeDeliveredOrders = sortOrdersNaturally(orders.filter(isOrderDelivered));
-  // Live Stock Math: totalDeliveredMails counts downloaded or replaced accounts
-  const totalDeliveredMails = accounts.filter((a) => a.status === 'downloaded' || a.status === 'replaced').length;
+  // Authoritative delivered mails: Sum of delivered orders quantity (11,105)
+  const orderDeliveredQty = activeDeliveredOrders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
+  const accountDeliveredQty = accounts.filter((a) => a.status === 'downloaded' || a.status === 'replaced').length;
+  const totalDeliveredMails = orderDeliveredQty > 0 ? orderDeliveredQty : accountDeliveredQty;
+
   const replacedMailsCount = replacements.length > 0
     ? replacements.length
     : accounts.filter((a) => a.status === 'replaced').length;
 
   const netActiveMails = Math.max(0, totalDeliveredMails - replacedMailsCount);
 
-  const avgRate = activeDeliveredOrders.length > 0
-    ? (activeDeliveredOrders.reduce((sum, o) => sum + (o.rate_per_mail !== undefined ? o.rate_per_mail : 18), 0) / activeDeliveredOrders.length)
-    : 18;
-
-  const grossBilledAmount = totalDeliveredMails * avgRate;
+  const orderBilledAmount = activeDeliveredOrders.reduce((sum, o) => sum + (Number(o.total_price) || (Number(o.quantity) * 18)), 0);
+  const grossBilledAmount = orderBilledAmount > 0 ? orderBilledAmount : (totalDeliveredMails * 18);
 
   const totalDeductions = replacements.length > 0
-    ? replacements.reduce((sum, r) => sum + (r.rate_deduction || 18), 0)
+    ? replacements.reduce((sum, r) => sum + (Number(r.rate_deduction) || 18), 0)
     : (replacedMailsCount * 18);
 
   const netBilledAmount = Math.max(0, grossBilledAmount - totalDeductions);
