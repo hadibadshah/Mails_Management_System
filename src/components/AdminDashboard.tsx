@@ -760,6 +760,8 @@ export default function AdminDashboard({
     if (editingOrderId) {
       // Edit existing order metadata
       const rate = orderModalRate || 18;
+      const targetOrder = orders.find((o) => o.id === editingOrderId);
+      const computedTotal = targetOrder ? (targetOrder.quantity * rate) : undefined;
       const updated = orders.map((o) => {
         if (o.id === editingOrderId) {
           return {
@@ -767,7 +769,7 @@ export default function AdminDashboard({
             order_number: orderModalNumber.trim(),
             created_at: orderModalDate || o.created_at,
             rate_per_mail: rate,
-            total_price: o.quantity * rate,
+            total_price: computedTotal !== undefined ? computedTotal : (o.quantity * rate),
             notes: orderModalNotes
           };
         }
@@ -784,6 +786,7 @@ export default function AdminDashboard({
         order_number: orderModalNumber.trim(),
         created_at: orderModalDate,
         rate_per_mail: rate,
+        total_price: computedTotal,
         notes: orderModalNotes
       }).then((res) => {
         if (res && res.success && onSyncWithLive) onSyncWithLive();

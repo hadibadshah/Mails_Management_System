@@ -1137,7 +1137,7 @@ $csrfToken = Auth::getCsrfToken();
                     </button>
                 </div>
 
-                <form id="form-ingest-order" onsubmit="VaultApp.handleIngestOrder(e || event)" class="p-6 overflow-y-auto custom-scroll space-y-4 text-xs font-mono">
+                <form id="form-ingest-order" onsubmit="VaultApp.handleIngestOrder(event)" class="p-6 overflow-y-auto custom-scroll space-y-4 text-xs font-mono">
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-slate-300 uppercase mb-1">Order # / Name (Optional)</label>
@@ -1210,7 +1210,7 @@ $csrfToken = Auth::getCsrfToken();
                     </button>
                 </div>
 
-                <form id="form-edit-order" onsubmit="VaultApp.handleEditOrder(e || event)" class="p-6 space-y-4 text-xs font-mono">
+                <form id="form-edit-order" onsubmit="VaultApp.handleEditOrder(event)" class="p-6 space-y-4 text-xs font-mono">
                     <input type="hidden" id="edit-order-id">
                     <div>
                         <label class="block text-slate-300 uppercase mb-1">Order # / Name</label>
@@ -1263,7 +1263,7 @@ $csrfToken = Auth::getCsrfToken();
                     </button>
                 </div>
 
-                <form id="form-payment" onsubmit="VaultApp.handleSavePayment(e || event)" class="p-6 space-y-4 text-xs font-mono">
+                <form id="form-payment" onsubmit="VaultApp.handleSavePayment(event)" class="p-6 space-y-4 text-xs font-mono">
                     <input type="hidden" id="payment-id" value="0">
                     <div>
                         <label class="block text-slate-300 uppercase mb-1">Amount Received (PKR) *</label>
@@ -1325,7 +1325,7 @@ $csrfToken = Auth::getCsrfToken();
                     </button>
                 </div>
 
-                <form id="form-replacements" onsubmit="VaultApp.handleAddReplacements(e || event)" class="p-6 space-y-4 text-xs font-mono">
+                <form id="form-replacements" onsubmit="VaultApp.handleAddReplacements(event)" class="p-6 space-y-4 text-xs font-mono">
                     <div>
                         <div class="flex items-center justify-between mb-1">
                             <label class="text-slate-300 uppercase">Faulty Emails List *</label>

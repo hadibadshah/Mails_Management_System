@@ -50,6 +50,30 @@ async function callHostingerApi(action: string, options: {
 } = {}): Promise<any> {
   const method = options.method || 'GET';
   const timeoutMs = options.timeoutMs || 10000;
+
+  // 1. In browser environment, route POST mutations through secure Node.js authenticated bridge
+  if (method === 'POST') {
+    try {
+      const payload = options.body instanceof FormData
+        ? Object.fromEntries((options.body as any).entries())
+        : (options.body || {});
+
+      const proxyRes = await fetch('/api/hostinger/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, payload })
+      });
+
+      if (proxyRes.ok) {
+        const data = await proxyRes.json();
+        return data;
+      }
+    } catch (proxyErr) {
+      console.warn(`Hostinger bridge proxy error for action ${action}:`, proxyErr);
+    }
+  }
+
+  // 2. Direct fallback (for direct cloud execution or GET actions)
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 

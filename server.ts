@@ -233,6 +233,37 @@ class HostingerBridge {
       return { success: res.statusCode === 200 };
     }
   }
+
+  async callAction(action: string, data: any = {}): Promise<any> {
+    const cookie = await this.ensureAuthenticated();
+    const params = new URLSearchParams();
+    params.append('csrf_token', this.csrfToken);
+    if (data && typeof data === 'object') {
+      for (const [k, v] of Object.entries(data)) {
+        if (v !== undefined && v !== null && k !== 'csrf_token') {
+          if (Array.isArray(v)) {
+            params.append(k, JSON.stringify(v));
+          } else {
+            params.append(k, String(v));
+          }
+        }
+      }
+    }
+    const body = params.toString();
+    const res = await this.request(`/api.php?action=${encodeURIComponent(action)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': cookie
+      }
+    }, body);
+
+    try {
+      return JSON.parse(res.data);
+    } catch {
+      return { success: res.statusCode === 200, raw: res.data };
+    }
+  }
 }
 
 const bridge = new HostingerBridge();
@@ -249,6 +280,21 @@ async function startServer() {
   // ==========================================
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Execute Authenticated Action on Hostinger Live Database (save_order, delete_order, save_payment, etc.)
+  app.post('/api/hostinger/action', async (req, res) => {
+    try {
+      const { action, payload } = req.body;
+      if (!action) {
+        res.status(400).json({ success: false, message: 'Action is required' });
+        return;
+      }
+      const result = await bridge.callAction(action, payload || {});
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message || 'Action execution failed' });
+    }
   });
 
   // Live Sync Endpoint: Returns live orders, accounts, stock from Hostinger
