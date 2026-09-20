@@ -11,6 +11,8 @@ jobs:
   deploy:
     name: 🚀 Deploy to Hostinger (public_html/asim/)
     runs-on: ubuntu-latest
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
     steps:
       - name: ⬇️ Checkout Repository
@@ -24,10 +26,12 @@ jobs:
           server: ${{ secrets.HOSTINGER_FTP_SERVER }}
           username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          port: 21
+          port: ${{ secrets.HOSTINGER_FTP_PORT || 21 }}
+          protocol: ${{ secrets.HOSTINGER_FTP_PROTOCOL || 'ftp' }}
           server-dir: 'public_html/asim/'
           local-dir: './hostinger_package/'
           dangerous-clean-slate: false # Never delete existing database or files on server!
+          timeout: 60000
           exclude: |
             **/.git*
             **/.git*/**
