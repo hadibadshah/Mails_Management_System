@@ -658,11 +658,11 @@ try {
                 respondJson(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
-            // Live Stock Math: Gross Sold Mails is dynamically counted from active 'downloaded' emails in stock
+            // Live Stock Math: Gross Delivered Mails is dynamically counted from all delivered emails ('downloaded' and 'replaced')
             $emailStats = $pdo->query("
                 SELECT COUNT(*) as sold_count 
                 FROM emails 
-                WHERE status = 'downloaded'
+                WHERE status IN ('downloaded', 'replaced')
             ")->fetch();
             $grossSold = (int)($emailStats['sold_count'] ?? 0);
 
@@ -708,9 +708,9 @@ try {
             $totalPayments = (int)($payStats['total_payments'] ?? 0);
             $totalPaid = (float)($payStats['total_paid_amount'] ?? 0);
 
-            // Net Calculations: Live stock sold minus replacements
+            // Net Calculations: Gross Delivered minus replacements
             $netActiveMails = max(0, $grossSold - $replacedCount);
-            $netBilledAmount = max(0.0, $netActiveMails * $defaultRate);
+            $netBilledAmount = max(0.0, $grossBilled - $totalDeductions);
             $pendingBalance = $netBilledAmount - $totalPaid;
 
             respondJson([
@@ -861,8 +861,91 @@ try {
                     $orderNumber = "Order #" . $cnt;
                 }
 
+                // Check 1: Duplicate order number detection
+                $checkExistingOrder = $pdo->prepare("SELECT id, order_number, accounts_json, quantity, total_price FROM orders WHERE LOWER(order_number) = LOWER(?)");
+                $checkExistingOrder->execute([$orderNumber]);
+                $existingOrder = $checkExistingOrder->fetch();
+
+                // Map incoming emails
+                $incomingEmailsSet = [];
+                foreach ($accounts as $acc) {
+                    $em = strtolower(trim($acc['email']));
+                    if (!empty($em)) {
+                        $incomingEmailsSet[$em] = $acc;
+                    }
+                }
+
+                if ($existingOrder) {
+                    $existingAccounts = json_decode($existingOrder['accounts_json'] ?? '[]', true) ?: [];
+                    $existingSet = [];
+                    foreach ($existingAccounts as $ea) {
+                        $eem = strtolower(trim($ea['email'] ?? ''));
+                        if (!empty($eem)) $existingSet[$eem] = true;
+                    }
+
+                    $allMatch = (count($existingSet) > 0 && count($existingSet) === count($incomingEmailsSet));
+                    if ($allMatch) {
+                        foreach (array_keys($incomingEmailsSet) as $iem) {
+                            if (!isset($existingSet[$iem])) {
+                                $allMatch = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if ($allMatch) {
+                        respondJson([
+                            'success'       => false,
+                            'duplicate'     => true,
+                            'already_exists'=> true,
+                            'order_id'      => $existingOrder['id'],
+                            'order_number'  => $existingOrder['order_number'],
+                            'message'       => "Duplicate Order Detected: '{$orderNumber}' pehle se mojood hai aur isme yeh 500 emails already darj hain. Duplicate order nahi banaya gaya taake double billing na ho."
+                        ]);
+                    }
+                }
+
+                // Check 2: Smart Duplicate & Sold Mail Detection across entire database
+                $inClause = implode(',', array_fill(0, count($incomingEmailsSet), '?'));
+                $checkSoldStmt = $pdo->prepare("
+                    SELECT LOWER(email) as email, status 
+                    FROM emails 
+                    WHERE LOWER(email) IN ($inClause) AND status IN ('downloaded', 'replaced')
+                ");
+                $checkSoldStmt->execute(array_keys($incomingEmailsSet));
+                $soldEmailsRows = $checkSoldStmt->fetchAll();
+                $soldEmailsMap = [];
+                foreach ($soldEmailsRows as $sr) {
+                    $soldEmailsMap[strtolower($sr['email'])] = $sr['status'];
+                }
+
+                $alreadySoldCount = count($soldEmailsMap);
+                $totalIncoming = count($incomingEmailsSet);
+
+                if ($alreadySoldCount >= $totalIncoming) {
+                    respondJson([
+                        'success'   => false,
+                        'duplicate' => true,
+                        'message'   => "Double-Billing Warning: Is CSV ki tamam {$totalIncoming} emails pehle se kisi order me sold ho chuki hain. Client ko double bill hone se bachane ke liye yeh duplicate order create nahi kiya gaya."
+                    ]);
+                }
+
+                // If some emails are new and some were already sold, bill only genuinely new accounts
+                $newAccounts = [];
+                $alreadySoldInBatch = [];
+                foreach ($accounts as $acc) {
+                    $em = strtolower(trim($acc['email']));
+                    if (isset($soldEmailsMap[$em])) {
+                        $alreadySoldInBatch[] = $acc;
+                    } else {
+                        $newAccounts[] = $acc;
+                    }
+                }
+
                 $qty = count($accounts);
-                $finalTotal = $customTotal !== null ? $customTotal : ($qty * $ratePerMail);
+                $billableQty = count($newAccounts);
+                // If customTotal was explicitly sent and equal to qty * rate, adjust to billableQty
+                $finalTotal = $customTotal !== null ? $customTotal : ($billableQty * $ratePerMail);
                 $finalDate = !empty($orderDate) ? $orderDate : date('Y-m-d H:i:s');
 
                 $pdo->beginTransaction();
@@ -914,12 +997,18 @@ try {
 
                 Database::logAudit(Auth::user()['username'] ?? 'admin', 'admin', 'ORDER_CREATED', "Ingested {$orderNumber} with {$qty} accounts");
 
+                $infoMsg = "{$orderNumber} saved successfully with {$qty} accounts.";
+                if (count($alreadySoldInBatch) > 0) {
+                    $infoMsg .= " (" . count($alreadySoldInBatch) . " accounts pehle se sold thin jinhe double charge nahi kiya gaya. Billed accounts: {$billableQty})";
+                }
+
                 respondJson([
                     'success'      => true,
                     'order_number' => $orderNumber,
                     'quantity'     => $qty,
+                    'billable_qty' => $billableQty,
                     'total_price'  => $finalTotal,
-                    'message'      => "{$orderNumber} saved successfully with {$qty} accounts."
+                    'message'      => $infoMsg
                 ]);
             }
             break;
@@ -945,10 +1034,25 @@ try {
             if ($order && !empty($order['accounts_json'])) {
                 $accList = json_decode($order['accounts_json'], true) ?: [];
                 if (!empty($accList)) {
+                    // Check other active orders
+                    $otherOrders = $pdo->prepare("SELECT accounts_json FROM orders WHERE id != ?");
+                    $otherOrders->execute([$orderId]);
+                    $otherEmailsMap = [];
+                    while ($row = $otherOrders->fetch()) {
+                        $otherList = json_decode($row['accounts_json'] ?? '[]', true) ?: [];
+                        foreach ($otherList as $oa) {
+                            $oem = strtolower(trim($oa['email'] ?? ''));
+                            if (!empty($oem)) {
+                                $otherEmailsMap[$oem] = true;
+                            }
+                        }
+                    }
+
                     $upStmt = $pdo->prepare("UPDATE emails SET status = 'available', downloaded_at = NULL, replaced_at = NULL WHERE LOWER(email) = LOWER(?)");
                     foreach ($accList as $acc) {
-                        $em = trim($acc['email'] ?? '');
-                        if (!empty($em)) {
+                        $em = strtolower(trim($acc['email'] ?? ''));
+                        // Only revert if NOT in any other order!
+                        if (!empty($em) && !isset($otherEmailsMap[$em])) {
                             $upStmt->execute([$em]);
                             $revertedAccounts++;
                         }
@@ -970,6 +1074,50 @@ try {
                 'success' => true,
                 'reverted_count' => $revertedAccounts,
                 'message' => "Order #{$orderId} deleted successfully and {$revertedAccounts} accounts reverted to Available stock."
+            ]);
+            break;
+
+        // ==========================================
+        // Cleanup Duplicate Orders (Admin Only)
+        // Safely removes duplicate order records without touching emails table
+        // ==========================================
+        case 'cleanup_duplicate_orders':
+            if (!Auth::isAdmin()) {
+                respondJson(['success' => false, 'message' => 'Admin authorization required.'], 403);
+            }
+
+            $allOrders = $pdo->query("SELECT id, order_number, accounts_json, total_price, created_at FROM orders ORDER BY id ASC")->fetchAll();
+            $seenOrderNumbers = [];
+            $deletedIds = [];
+
+            foreach ($allOrders as $ord) {
+                $num = strtolower(trim($ord['order_number']));
+                if (isset($seenOrderNumbers[$num])) {
+                    // Duplicate found! Keep the earlier one, delete this subsequent duplicate
+                    $delStmt = $pdo->prepare("DELETE FROM orders WHERE id = ?");
+                    $delStmt->execute([$ord['id']]);
+                    $deletedIds[] = $ord['id'];
+                } else {
+                    $seenOrderNumbers[$num] = $ord['id'];
+                }
+            }
+
+            if (!empty($deletedIds)) {
+                Database::logAudit(
+                    Auth::user()['username'] ?? 'admin',
+                    'admin',
+                    'DUPLICATES_CLEANED',
+                    "Removed duplicate order IDs: " . implode(', ', $deletedIds)
+                );
+            }
+
+            respondJson([
+                'success'     => true,
+                'cleaned'     => count($deletedIds),
+                'deleted_ids' => $deletedIds,
+                'message'     => count($deletedIds) > 0 
+                    ? "Successfully cleaned " . count($deletedIds) . " duplicate order(s) (IDs: " . implode(', ', $deletedIds) . ")." 
+                    : "No duplicate orders found in database."
             ]);
             break;
 
@@ -1394,7 +1542,13 @@ try {
                     $dom = $at !== false ? substr($email, $at + 1) : '';
                 }
 
-                $updateEmail->execute([$email]);
+                if (!$existing) {
+                    $insEmail = $pdo->prepare("INSERT INTO emails (email, password, recovery_email, domain, status, created_at, replaced_at) VALUES (?, ?, ?, ?, 'replaced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
+                    $insEmail->execute([$email, $pass, $rec, $dom]);
+                } else {
+                    $updateEmail->execute([$email]);
+                }
+
                 $insertRep->execute([$email, $pass, $rec, $dom, $rateDeduction, $reason]);
                 $addedCount++;
             }
@@ -1430,7 +1584,7 @@ try {
                 $del = $pdo->prepare("DELETE FROM replacements WHERE id = ?");
                 $del->execute([$repId]);
                 // Revert email status to downloaded
-                $upd = $pdo->prepare("UPDATE emails SET status = 'downloaded' WHERE email = ?");
+                $upd = $pdo->prepare("UPDATE emails SET status = 'downloaded', replaced_at = NULL WHERE LOWER(email) = LOWER(?)");
                 $upd->execute([$rec['email']]);
             }
 

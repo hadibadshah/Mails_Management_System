@@ -144,21 +144,26 @@ class HostingerBridge {
         }
       }
 
-      // Flatten accounts from orders
+      // Flatten accounts from orders (deduplicate by email to avoid double counting)
       const extractedAccounts: any[] = [];
+      const seenAccountEmails = new Set<string>();
       for (const order of ordersData) {
         if (Array.isArray(order.accounts)) {
           for (const acc of order.accounts) {
-            extractedAccounts.push({
-              id: acc.id || extractedAccounts.length + 1,
-              email: acc.email,
-              password: acc.password || 'VaultP@ss101',
-              recovery_email: acc.recovery_email || '',
-              domain: order.domain || 'basis5.ch',
-              status: 'downloaded',
-              created_at: order.created_at,
-              downloaded_at: order.created_at
-            });
+            const em = (acc.email || '').toLowerCase().trim();
+            if (em && !seenAccountEmails.has(em)) {
+              seenAccountEmails.add(em);
+              extractedAccounts.push({
+                id: acc.id || extractedAccounts.length + 1,
+                email: acc.email,
+                password: acc.password || 'VaultP@ss101',
+                recovery_email: acc.recovery_email || '',
+                domain: order.domain || 'basis5.ch',
+                status: 'downloaded',
+                created_at: order.created_at,
+                downloaded_at: order.created_at
+              });
+            }
           }
         }
       }

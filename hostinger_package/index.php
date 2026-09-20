@@ -871,6 +871,10 @@ $csrfToken = Auth::getCsrfToken();
                             </div>
                             <div class="flex items-center space-x-2.5">
                                 <input type="text" id="admin-orders-search" oninput="VaultApp.renderAdminOrders()" placeholder="Search order # or domain..." class="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-400 w-44 sm:w-56">
+                                <button type="button" onclick="VaultApp.cleanupDuplicateOrders()" class="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-mono border border-amber-500/30 flex items-center space-x-1 transition-all" title="Scan and Clean Duplicate Orders">
+                                    <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                    <span>Clean Duplicates</span>
+                                </button>
                                 <button type="button" onclick="VaultApp.openIngestOrderModal()" class="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono flex items-center space-x-1 transition-all shadow-sm">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                                     <span>+ Add Order</span>
@@ -2786,7 +2790,8 @@ $csrfToken = Auth::getCsrfToken();
                                 html: `
                                     <div class="text-xs text-slate-300 space-y-1.5 text-left font-mono">
                                         <p class="text-emerald-400 font-bold">✅ ${orderNum} created with ${data.quantity || 'all'} accounts</p>
-                                        <p class="text-cyan-300">Rate: Rs. ${ratePerMail}/mail | Total Bill: Rs. ${totalPrice.toLocaleString()}</p>
+                                        <p class="text-cyan-300">Rate: Rs. ${ratePerMail}/mail | Total Bill: Rs. ${(data.total_price !== undefined ? data.total_price : totalPrice).toLocaleString()}</p>
+                                        ${data.billable_qty !== undefined && data.billable_qty < data.quantity ? `<p class="text-amber-300 text-xs font-semibold">⚠️ ${data.billable_qty} new accounts billed (${data.quantity - data.billable_qty} duplicates skipped from bill)</p>` : ''}
                                         <p class="text-slate-400 text-[11px] mt-2">Accounts mark ho gaye hain Delivered (Sold), Khata ledger update ho gaya hai, aur Client portal par CSV download button ke sath show ho raha hai.</p>
                                     </div>
                                 `
@@ -2795,6 +2800,18 @@ $csrfToken = Auth::getCsrfToken();
                             try { await this.loadAdminData(); } catch(e) { console.warn('Refresh admin data error:', e); }
                             try { await this.loadOrders(); } catch(e) { console.warn('Refresh orders error:', e); }
                             try { await this.loadKhataData(); } catch(e) { console.warn('Refresh khata error:', e); }
+                        } else if (data.duplicate) {
+                            Swal.fire({
+                                customClass: { popup: 'cyber-swal' },
+                                icon: 'warning',
+                                title: 'Double-Billing Protection',
+                                html: `
+                                    <div class="text-xs text-slate-300 space-y-2 text-left font-mono">
+                                        <p class="text-amber-400 font-bold">⚠️ ${data.message}</p>
+                                        <p class="text-slate-400 text-[11px]">System ne client ko double-bill hone se bacha liya hai. Koi duplicate order create nahi hua aur na hi bill increase hua.</p>
+                                    </div>
+                                `
+                            });
                         } else {
                             Swal.fire({
                                 customClass: { popup: 'cyber-swal' },
@@ -3685,6 +3702,61 @@ $csrfToken = Auth::getCsrfToken();
                     }
                 } catch (e) {
                     Swal.fire({ customClass: { popup: 'cyber-swal' }, icon: 'error', title: 'Connection Error', text: 'Error connecting to server.' });
+                }
+            },
+
+            cleanupDuplicateOrders: async function() {
+                const conf = await Swal.fire({
+                    customClass: { popup: 'cyber-swal' },
+                    title: 'Clean Duplicate Orders?',
+                    html: `
+                        <div class="text-left text-xs font-mono space-y-2 text-slate-300">
+                            <p>System database me check karega agar koi duplicate order mojood hai to unhe safely remove kar dega.</p>
+                            <p class="text-cyan-400">Emails table aur active stock bilkul mehfooz rahenge aur bill normalize ho jayega.</p>
+                        </div>
+                    `,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: 'Yes, Clean Duplicates',
+                    cancelButtonText: 'Cancel'
+                });
+
+                if (!conf.isConfirmed) return;
+
+                try {
+                    const fd = new FormData();
+                    fd.append('csrf_token', this.csrfToken);
+                    const res = await fetch('api.php?action=cleanup_duplicate_orders', {
+                        method: 'POST',
+                        body: fd
+                    });
+                    const data = await res.json();
+                    if (data.csrf_token) this.csrfToken = data.csrf_token;
+
+                    if (data.success) {
+                        Swal.fire({
+                            customClass: { popup: 'cyber-swal' },
+                            icon: 'success',
+                            title: 'Cleanup Complete',
+                            text: data.message
+                        });
+                        await this.loadOrders();
+                        await this.loadKhataData();
+                    } else {
+                        Swal.fire({
+                            customClass: { popup: 'cyber-swal' },
+                            icon: 'error',
+                            title: 'Cleanup Error',
+                            text: data.message || 'Could not clean duplicates'
+                        });
+                    }
+                } catch(e) {
+                    Swal.fire({
+                        customClass: { popup: 'cyber-swal' },
+                        icon: 'error',
+                        title: 'Error',
+                        text: e.message || 'Server communication error'
+                    });
                 }
             },
 
