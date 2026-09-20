@@ -1330,12 +1330,32 @@ $csrfToken = Auth::getCsrfToken();
                 </div>
 
                 <form id="form-replacements" onsubmit="VaultApp.handleAddReplacements(event)" class="p-6 space-y-4 text-xs font-mono">
+                    <!-- CSV / TXT File Upload Dropzone -->
+                    <div>
+                        <label class="block text-slate-300 uppercase mb-1">Upload CSV / TXT File (Optional)</label>
+                        <div id="rep-dropzone" onclick="document.getElementById('rep-csv-file').click()" class="border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-amber-950/10 hover:bg-amber-950/20 p-3.5 rounded-xl text-center cursor-pointer transition-all">
+                            <input type="file" id="rep-csv-file" accept=".csv,.txt" onchange="VaultApp.handleRepFileUpload(this.files[0])" class="hidden">
+                            <div class="flex items-center justify-center space-x-2 text-amber-400">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                                <span class="font-bold text-xs uppercase tracking-wide">Upload Faulty Accounts CSV / TXT</span>
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-1">Click to browse or drag & drop .csv / .txt file here (Auto-extracts first column email)</p>
+                        </div>
+                        <div id="rep-file-status" class="hidden mt-2 p-2 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-[11px] text-emerald-300 flex items-center justify-between">
+                            <div class="flex items-center space-x-2">
+                                <svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                <span id="rep-file-status-text" class="font-medium"></span>
+                            </div>
+                            <button type="button" onclick="VaultApp.clearRepFile()" class="text-xs text-rose-400 hover:text-rose-300 font-bold ml-2 cursor-pointer">&times; Clear</button>
+                        </div>
+                    </div>
+
                     <div>
                         <div class="flex items-center justify-between mb-1">
                             <label class="text-slate-300 uppercase">Faulty Emails List *</label>
-                            <span class="text-[10px] text-slate-500">One per line or comma-separated</span>
+                            <span class="text-[10px] text-slate-500">One per line, CSV, or comma-separated</span>
                         </div>
-                        <textarea id="rep-emails-text" rows="5" required placeholder="user1@basis5.ch&#10;user2@basis5.ch" class="w-full p-3 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-400 custom-scroll"></textarea>
+                        <textarea id="rep-emails-text" rows="5" required placeholder="user1@basis5.ch&#10;user2@basis5.ch&#10;or upload CSV above" class="w-full p-3 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-400 custom-scroll"></textarea>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -3410,12 +3430,87 @@ $csrfToken = Auth::getCsrfToken();
             openAddReplacementsModal: function() {
                 const form = document.getElementById('form-replacements');
                 if (form) form.reset();
+                this.clearRepFile();
                 document.getElementById('rep-rate-deduction').value = '18';
                 document.getElementById('rep-reason').value = 'Faulty / Disabled';
                 document.getElementById('replacements-modal').classList.remove('hidden');
+
+                // Setup drag and drop for replacement dropzone
+                const dz = document.getElementById('rep-dropzone');
+                if (dz && !dz._dndInit) {
+                    dz._dndInit = true;
+                    ['dragenter', 'dragover'].forEach(eventName => {
+                        dz.addEventListener(eventName, (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            dz.classList.add('border-amber-400', 'bg-amber-950/30');
+                        }, false);
+                    });
+                    ['dragleave', 'drop'].forEach(eventName => {
+                        dz.addEventListener(eventName, (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            dz.classList.remove('border-amber-400', 'bg-amber-950/30');
+                        }, false);
+                    });
+                    dz.addEventListener('drop', (e) => {
+                        const dt = e.dataTransfer;
+                        const files = dt ? dt.files : null;
+                        if (files && files[0]) {
+                            VaultApp.handleRepFileUpload(files[0]);
+                        }
+                    }, false);
+                }
+            },
+
+            handleRepFileUpload: function(file) {
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const content = (e.target && e.target.result) ? e.target.result : '';
+                    const lines = content.split(/[\r\n]+/);
+                    const emails = [];
+                    for (const rawLine of lines) {
+                        const line = rawLine.trim();
+                        if (!line) continue;
+                        if (line.includes(',') || line.includes('\t') || line.includes(';')) {
+                            const parts = line.split(/[,;\t]+/).map(p => p.trim().replace(/^["']|["']$/g, ''));
+                            const emailCol = parts.find(p => p.includes('@') && !p.includes(' '));
+                            if (emailCol) {
+                                emails.push(emailCol.toLowerCase());
+                                continue;
+                            }
+                        }
+                        const matches = line.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+                        if (matches) {
+                            matches.forEach(m => emails.push(m.toLowerCase()));
+                        }
+                    }
+                    const unique = Array.from(new Set(emails));
+                    if (unique.length === 0) {
+                        Swal.fire({ customClass: { popup: 'cyber-swal' }, icon: 'warning', title: 'No Emails Found', text: 'CSV/TXT file me koi valid email nahi mili.' });
+                        return;
+                    }
+                    document.getElementById('rep-emails-text').value = unique.join('\n');
+                    const statusBox = document.getElementById('rep-file-status');
+                    const statusText = document.getElementById('rep-file-status-text');
+                    if (statusBox && statusText) {
+                        statusText.innerText = `✅ ${unique.length} accounts loaded from "${file.name}"`;
+                        statusBox.classList.remove('hidden');
+                    }
+                };
+                reader.readAsText(file);
+            },
+
+            clearRepFile: function() {
+                const fileInput = document.getElementById('rep-csv-file');
+                if (fileInput) fileInput.value = '';
+                const statusBox = document.getElementById('rep-file-status');
+                if (statusBox) statusBox.classList.add('hidden');
             },
 
             closeReplacementsModal: function() {
+                this.clearRepFile();
                 document.getElementById('replacements-modal').classList.add('hidden');
             },
 
@@ -3435,16 +3530,22 @@ $csrfToken = Auth::getCsrfToken();
                 const reason = document.getElementById('rep-reason').value.trim();
 
                 if (!rawText) {
-                    Swal.fire({ customClass: { popup: 'cyber-swal' }, icon: 'warning', title: 'Emails Required', text: 'Please enter faulty email accounts to deduct.' });
+                    Swal.fire({ customClass: { popup: 'cyber-swal' }, icon: 'warning', title: 'Emails Required', text: 'Please enter faulty email accounts or upload a CSV file.' });
                     return;
                 }
 
                 try {
                     const formData = new FormData();
                     formData.append('emails_text', rawText);
+                    formData.append('emails', rawText);
                     formData.append('rate_deduction', rateDeduction);
                     formData.append('reason', reason);
                     formData.append('csrf_token', this.csrfToken);
+
+                    const fileInput = document.getElementById('rep-csv-file');
+                    if (fileInput && fileInput.files && fileInput.files[0]) {
+                        formData.append('csv_file', fileInput.files[0]);
+                    }
 
                     const res = await fetch('api.php?action=add_replacements', {
                         method: 'POST',
@@ -3458,13 +3559,14 @@ $csrfToken = Auth::getCsrfToken();
                             icon: 'success',
                             title: 'Replacements Deducted',
                             text: data.message || `${data.added_count} accounts deducted from bill.`,
-                            timer: 1600,
+                            timer: 1800,
                             showConfirmButton: false
                         });
                         this.closeReplacementsModal();
                         await this.loadReplacements();
                         await this.loadKhataData();
                         await this.loadAdminData();
+                        await this.loadAdminStats();
                     } else {
                         Swal.fire({ customClass: { popup: 'cyber-swal' }, icon: 'error', title: 'Error', text: data.message || 'Failed to add replacements.' });
                     }

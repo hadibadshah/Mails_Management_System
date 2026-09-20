@@ -342,10 +342,12 @@ export async function addReplacementsToLive(
   rateDeduction: number = 18,
   reason: string = 'Faulty Replacement'
 ): Promise<{ success: boolean; message: string; count?: number }> {
+  const emailsText = emails.join('\n');
   return await callHostingerApi('add_replacements', {
     method: 'POST',
     body: {
-      emails: emails.join('\n'),
+      emails_text: emailsText,
+      emails: emailsText,
       rate_deduction: rateDeduction,
       reason,
     },

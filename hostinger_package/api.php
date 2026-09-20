@@ -658,19 +658,13 @@ try {
                 respondJson(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
-            // Live Stock Math: Gross Delivered Mails is dynamically counted from all delivered emails ('downloaded' and 'replaced')
-            $emailStats = $pdo->query("
-                SELECT COUNT(*) as sold_count 
-                FROM emails 
-                WHERE status IN ('downloaded', 'replaced')
-            ")->fetch();
-            $grossSold = (int)($emailStats['sold_count'] ?? 0);
-
-            // Effective rate determination
+            // Effective rate determination & orders total
             $defaultRate = 18.0;
             $orderStats = $pdo->query("
                 SELECT 
                     COUNT(*) as total_orders,
+                    COALESCE(SUM(quantity), 0) as total_order_qty,
+                    COALESCE(SUM(total_price), 0) as total_order_billed,
                     AVG(rate_per_mail) as avg_rate
                 FROM orders
                 WHERE (status != 'reverted' AND status != 'cancelled' OR status IS NULL OR status = '')
@@ -681,7 +675,8 @@ try {
                 $defaultRate = (float)$orderStats['avg_rate'];
             }
             $totalOrders = (int)($orderStats['total_orders'] ?? 0);
-            $grossBilled = $grossSold * $defaultRate;
+            $orderGrossQty = (int)($orderStats['total_order_qty'] ?? 0);
+            $orderGrossBilled = (float)($orderStats['total_order_billed'] ?? 0);
 
             // Replaced count & deductions
             $repStats = $pdo->query("
@@ -695,6 +690,21 @@ try {
             $totalDeductions = (float)($repStats['total_deductions'] ?? 0);
             if ($totalDeductions <= 0 && $replacedCount > 0) {
                 $totalDeductions = $replacedCount * $defaultRate;
+            }
+
+            // Gross Delivered / Sold:
+            // Prefer orders total quantity since that represents client orders billed
+            if ($orderGrossQty > 0) {
+                $grossSold = $orderGrossQty;
+                $grossBilled = $orderGrossBilled > 0 ? $orderGrossBilled : ($grossSold * $defaultRate);
+            } else {
+                $emailStats = $pdo->query("
+                    SELECT COUNT(*) as sold_count 
+                    FROM emails 
+                    WHERE status IN ('downloaded', 'replaced')
+                ")->fetch();
+                $grossSold = (int)($emailStats['sold_count'] ?? 0);
+                $grossBilled = $grossSold * $defaultRate;
             }
 
             // Payments total
@@ -1506,26 +1516,55 @@ try {
                 respondJson(['success' => false, 'message' => 'Admin authorization required.'], 403);
             }
 
-            $rawText = (string)($_POST['emails_text'] ?? '');
+            $rawText = (string)($_POST['emails_text'] ?? $_POST['emails'] ?? '');
+
+            // Handle direct CSV or TXT file upload if provided
+            if (!empty($_FILES['csv_file']['tmp_name']) && is_uploaded_file($_FILES['csv_file']['tmp_name'])) {
+                $uploaded = file_get_contents($_FILES['csv_file']['tmp_name']);
+                if ($uploaded !== false) {
+                    $rawText .= "\n" . $uploaded;
+                }
+            } elseif (!empty($_FILES['file']['tmp_name']) && is_uploaded_file($_FILES['file']['tmp_name'])) {
+                $uploaded = file_get_contents($_FILES['file']['tmp_name']);
+                if ($uploaded !== false) {
+                    $rawText .= "\n" . $uploaded;
+                }
+            }
+
             $rateDeduction = (float)($_POST['rate_deduction'] ?? 18.0);
             $reason = trim((string)($_POST['reason'] ?? 'Faulty / Deducted'));
 
             if (empty(trim($rawText))) {
-                respondJson(['success' => false, 'message' => 'Please provide email accounts to replace/deduct.'], 400);
+                respondJson(['success' => false, 'message' => 'Please provide email accounts to replace/deduct via text or CSV upload.'], 400);
             }
 
-            $lines = preg_split("/[\r\n,]+/", trim($rawText));
+            $lines = preg_split("/[\r\n]+/", trim($rawText));
             $emails = [];
             foreach ($lines as $line) {
-                $e = strtolower(trim($line));
-                if (!empty($e) && filter_var($e, FILTER_VALIDATE_EMAIL)) {
-                    $emails[] = $e;
+                $line = trim($line);
+                if (empty($line)) continue;
+
+                // If line contains delimiters (CSV format: email,password,recovery)
+                if (strpos($line, ',') !== false || strpos($line, "\t") !== false || strpos($line, ';') !== false) {
+                    $cols = preg_split('/[,;\t]+/', $line);
+                    foreach ($cols as $col) {
+                        $c = trim(trim($col), "\"' \t\n\r\0\x0B");
+                        if (filter_var($c, FILTER_VALIDATE_EMAIL)) {
+                            $emails[] = strtolower($c);
+                            break; // Take the primary email from this row (first column)
+                        }
+                    }
+                } else {
+                    $e = strtolower(trim($line, "\"', \t\n\r\0\x0B"));
+                    if (!empty($e) && filter_var($e, FILTER_VALIDATE_EMAIL)) {
+                        $emails[] = $e;
+                    }
                 }
             }
             $emails = array_unique($emails);
 
             if (empty($emails)) {
-                respondJson(['success' => false, 'message' => 'No valid email addresses detected.'], 400);
+                respondJson(['success' => false, 'message' => 'No valid email addresses detected in text or CSV.'], 400);
             }
 
             $pdo->beginTransaction();

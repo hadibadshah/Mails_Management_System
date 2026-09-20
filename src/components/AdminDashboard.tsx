@@ -137,6 +137,8 @@ export default function AdminDashboard({
   const [replacementModalEmails, setReplacementModalEmails] = useState('');
   const [replacementModalRate, setReplacementModalRate] = useState<number>(18);
   const [replacementModalReason, setReplacementModalReason] = useState('Faulty Mail (Password / Disabled)');
+  const [repLoadedFileBadge, setRepLoadedFileBadge] = useState<string | null>(null);
+  const repFileInputRef = useRef<HTMLInputElement>(null);
 
   // Single Mail Finder
   const [finderQuery, setFinderQuery] = useState('');
@@ -1191,19 +1193,52 @@ export default function AdminDashboard({
   };
 
   // REPLACEMENT MANAGEMENT
+  const extractFaultyEmails = (text: string): string[] => {
+    const lines = text.split(/[\r\n]+/);
+    const emails: string[] = [];
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      if (line.includes(',') || line.includes('\t') || line.includes(';')) {
+        const parts = line.split(/[,;\t]+/).map((p) => p.trim().replace(/^["']|["']$/g, ''));
+        const emailCol = parts.find((p) => p.includes('@') && !p.includes(' '));
+        if (emailCol) {
+          emails.push(emailCol.toLowerCase());
+          continue;
+        }
+      }
+      const matches = line.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+      if (matches) {
+        matches.forEach((m) => emails.push(m.toLowerCase()));
+      }
+    }
+    return Array.from(new Set(emails));
+  };
+
+  const handleReplacementFile = (file: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = (e.target?.result as string) || '';
+      const list = extractFaultyEmails(content);
+      if (list.length === 0) {
+        cyberAlertError('No Emails Found', 'File me koi valid email nahi mili.');
+        return;
+      }
+      setReplacementModalEmails(list.join('\n'));
+      setRepLoadedFileBadge(`${list.length} accounts loaded from "${file.name}"`);
+    };
+    reader.readAsText(file);
+  };
+
   const handleSaveReplacement = (e: React.FormEvent) => {
     e.preventDefault();
     if (!replacementModalEmails.trim()) {
-      cyberAlertError('Khali Data', 'Kharab mails yahan paste karein.');
+      cyberAlertError('Khali Data', 'Kharab mails yahan paste karein ya CSV upload karein.');
       return;
     }
 
-    const rawList = replacementModalEmails
-      .split(/[\r\n,]+/)
-      .map((m) => m.trim().toLowerCase())
-      .filter((m) => m.length > 0 && m.includes('@'));
-
-    const unique: string[] = Array.from(new Set(rawList));
+    const unique = extractFaultyEmails(replacementModalEmails);
     if (unique.length === 0) {
       cyberAlertError('Invalid Format', 'Koi valid email nahi mili.');
       return;
@@ -1241,6 +1276,7 @@ export default function AdminDashboard({
     cyberAlertSuccess('Replacements Recorded', `${unique.length} mails deduct ho gayi hain aur -Rs. ${unique.length * rate} bill se minus ho gaya.`);
     setShowReplacementModal(false);
     setReplacementModalEmails('');
+    setRepLoadedFileBadge(null);
 
     // 2-Way Live Sync
     addReplacementsToLive(unique, rate, replacementModalReason).then((res) => {
@@ -2663,10 +2699,16 @@ export default function AdminDashboard({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
           <div className="bg-slate-900 border border-amber-500/40 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col font-mono text-xs">
             <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-              <h3 className="text-base font-bold text-white">Add Faulty Replacements (Auto-Deduction)</h3>
+              <div className="flex items-center space-x-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                <h3 className="text-base font-bold text-white">Add Faulty Replacements (Auto-Deduction)</h3>
+              </div>
               <button
                 type="button"
-                onClick={() => setShowReplacementModal(false)}
+                onClick={() => {
+                  setShowReplacementModal(false);
+                  setRepLoadedFileBadge(null);
+                }}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -2674,15 +2716,74 @@ export default function AdminDashboard({
             </div>
 
             <form onSubmit={handleSaveReplacement} className="p-6 space-y-4">
+              {/* CSV Upload / Drag-and-Drop Area */}
               <div>
-                <label className="block text-slate-400 mb-1">Faulty Emails List (1 per line or comma-separated)</label>
+                <label className="block text-slate-300 uppercase mb-1">Upload CSV / TXT File (Optional)</label>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) handleReplacementFile(file);
+                  }}
+                  onClick={() => repFileInputRef.current?.click()}
+                  className="p-3 border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-amber-950/10 hover:bg-amber-950/20 rounded-xl text-center cursor-pointer transition-all"
+                >
+                  <input
+                    ref={repFileInputRef}
+                    type="file"
+                    accept=".csv,.txt"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleReplacementFile(file);
+                    }}
+                  />
+                  <div className="flex items-center justify-center space-x-2 text-amber-400">
+                    <UploadCloud className="w-4 h-4" />
+                    <span className="font-bold text-xs uppercase tracking-wide">Upload Faulty Accounts CSV / TXT</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">Click to select or drag & drop file (Auto-extracts first column email)</p>
+                </div>
+
+                {repLoadedFileBadge && (
+                  <div className="mt-2 p-2 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-[11px] text-emerald-300 flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      <span>{repLoadedFileBadge}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRepLoadedFileBadge(null);
+                        setReplacementModalEmails('');
+                        if (repFileInputRef.current) repFileInputRef.current.value = '';
+                      }}
+                      className="text-xs text-rose-400 hover:text-rose-300 font-bold ml-2 cursor-pointer"
+                    >
+                      &times; Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-300 uppercase">Faulty Emails List *</label>
+                  {replacementModalEmails && (
+                    <span className="text-[10px] text-amber-400 font-bold">
+                      {extractFaultyEmails(replacementModalEmails).length} emails parsed
+                    </span>
+                  )}
+                </div>
                 <textarea
-                  rows={6}
+                  rows={5}
                   required
                   value={replacementModalEmails}
                   onChange={(e) => setReplacementModalEmails(e.target.value)}
-                  placeholder="bad_mail1@basis5.ch&#10;bad_mail2@adlover.site"
-                  className="w-full p-3 bg-slate-950 border border-slate-700 rounded-xl text-white"
+                  placeholder="bad_mail1@basis5.ch&#10;bad_mail2@adlover.site&#10;or upload CSV above"
+                  className="w-full p-3 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono"
                 />
               </div>
 
