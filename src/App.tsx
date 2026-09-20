@@ -24,16 +24,18 @@ import {
 import { INITIAL_EMAIL_ACCOUNTS, INITIAL_ORDERS } from './data/constants';
 import { cyberAlertSuccess } from './utils/cyberSwal';
 
-const STORAGE_ACCOUNTS_KEY = 'hadi_digital_accounts_v3';
-const STORAGE_SESSION_KEY = 'hadi_digital_session_v3';
-const STORAGE_ORDERS_KEY = 'hadi_digital_orders_v3';
-const STORAGE_PAYMENTS_KEY = 'hadi_digital_payments_v3';
-const STORAGE_REPLACEMENTS_KEY = 'hadi_digital_replacements_v3';
-const STORAGE_LOGS_KEY = 'hadi_digital_audit_logs_v3';
-const STORAGE_MAINTENANCE_KEY = 'hadi_digital_maintenance_v3';
+const STORAGE_ACCOUNTS_KEY = 'hadi_digital_accounts_v4';
+const STORAGE_SESSION_KEY = 'hadi_digital_session_v4';
+const STORAGE_ORDERS_KEY = 'hadi_digital_orders_v4';
+const STORAGE_PAYMENTS_KEY = 'hadi_digital_payments_v4';
+const STORAGE_REPLACEMENTS_KEY = 'hadi_digital_replacements_v4';
+const STORAGE_LOGS_KEY = 'hadi_digital_audit_logs_v4';
+const STORAGE_MAINTENANCE_KEY = 'hadi_digital_maintenance_v4';
 
-// Clear old legacy keys on initial run
+// Clear old legacy and empty cache keys on initial run
 try {
+  localStorage.removeItem('hadi_digital_accounts_v3');
+  localStorage.removeItem('hadi_digital_orders_v3');
   localStorage.removeItem('hadi_digital_accounts_v2');
   localStorage.removeItem('hadi_digital_orders_v2');
   localStorage.removeItem('hadi_digital_accounts_v1');
@@ -57,7 +59,11 @@ export default function App() {
   const [accounts, setAccounts] = useState<EmailAccount[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_ACCOUNTS_KEY);
-      return saved ? JSON.parse(saved) : INITIAL_EMAIL_ACCOUNTS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return INITIAL_EMAIL_ACCOUNTS;
     } catch {
       return INITIAL_EMAIL_ACCOUNTS;
     }
@@ -66,7 +72,11 @@ export default function App() {
   const [orders, setOrders] = useState<OrderRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_ORDERS_KEY);
-      return saved ? JSON.parse(saved) : INITIAL_ORDERS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return INITIAL_ORDERS;
     } catch {
       return INITIAL_ORDERS;
     }
@@ -237,10 +247,10 @@ export default function App() {
     try {
       const res = await fetchFullSync();
       if (res && res.success) {
-        if (Array.isArray(res.accounts)) {
+        if (Array.isArray(res.accounts) && res.accounts.length > 0) {
           setAccounts(res.accounts);
         }
-        if (Array.isArray(res.orders)) {
+        if (Array.isArray(res.orders) && res.orders.length > 0) {
           setOrders(res.orders);
         }
         if (Array.isArray(res.payments)) {
@@ -275,6 +285,15 @@ export default function App() {
     }
   }, []);
 
+  // Automatic 2-Way Real-time Polling every 20 seconds
+  useEffect(() => {
+    syncWithLiveDatabase(true);
+    const syncInterval = setInterval(() => {
+      syncWithLiveDatabase(true);
+    }, 20000);
+    return () => clearInterval(syncInterval);
+  }, [syncWithLiveDatabase]);
+
   const handleUpdateMaintenance = useCallback(async (settings: MaintenanceSettings) => {
     setMaintenance(settings);
     try {
@@ -284,15 +303,6 @@ export default function App() {
       console.warn('Failed to update maintenance on Hostinger:', err);
     }
   }, [addLog]);
-
-  // Initial and periodic background sync with Hostinger live database (every 20s)
-  useEffect(() => {
-    syncWithLiveDatabase(true);
-    const syncInterval = setInterval(() => {
-      syncWithLiveDatabase(true);
-    }, 20000);
-    return () => clearInterval(syncInterval);
-  }, [syncWithLiveDatabase]);
 
   return (
     <div className="relative min-h-screen flex flex-col justify-between selection:bg-cyan-500/30 selection:text-cyan-200">

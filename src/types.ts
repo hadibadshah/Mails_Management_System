@@ -39,6 +39,7 @@ export interface AuditLog {
 export type ExportFormat = 'csv' | 'txt';
 
 export interface ExtractedEmailItem {
+  id?: number;
   email: string;
   password: string;
   recovery_email: string;
