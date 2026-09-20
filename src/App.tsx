@@ -8,6 +8,8 @@ import ClientMaintenanceScreen from './components/ClientMaintenanceScreen';
 import LiveHostingerModal from './components/LiveHostingerModal';
 import {
   pingHostinger,
+  fetchFullSync,
+  updateMaintenanceOnLive,
   HostingerPingResponse
 } from './services/hostingerService';
 import {
@@ -214,7 +216,7 @@ export default function App() {
     cyberAlertSuccess('Logout Ho Gaya', 'Aap kamyabi se portal se logout ho gaye hain.');
   };
 
-  const addLog = (action: string, details: string) => {
+  const addLog = useCallback((action: string, details: string) => {
     const newLog: AuditLog = {
       id: Date.now(),
       username: session?.username || 'system',
@@ -224,7 +226,73 @@ export default function App() {
       timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19)
     };
     setLogs((prev) => [newLog, ...prev.slice(0, 49)]);
-  };
+  }, [session]);
+
+  // 2-Way Real-time Sync with Live Hostinger SQLite Database
+  const [isSyncingLive, setIsSyncingLive] = useState(false);
+  const [lastLiveSyncAt, setLastLiveSyncAt] = useState<Date | null>(null);
+
+  const syncWithLiveDatabase = useCallback(async (isSilent = false) => {
+    setIsSyncingLive(true);
+    try {
+      const res = await fetchFullSync();
+      if (res && res.success) {
+        if (Array.isArray(res.accounts)) {
+          setAccounts(res.accounts);
+        }
+        if (Array.isArray(res.orders)) {
+          setOrders(res.orders);
+        }
+        if (Array.isArray(res.payments)) {
+          setPayments(res.payments);
+        }
+        if (Array.isArray(res.replacements)) {
+          setReplacements(res.replacements);
+        }
+        if (res.maintenance) {
+          setMaintenance(res.maintenance);
+        }
+        if (Array.isArray(res.logs) && res.logs.length > 0) {
+          setLogs(res.logs);
+        }
+        setLastLiveSyncAt(new Date());
+        setIsHostingerOnline(true);
+        if (!isSilent) {
+          cyberAlertSuccess(
+            'Live Database Synchronized',
+            `<div class="text-xs text-slate-300 font-mono space-y-1">
+              <p class="text-emerald-400 font-bold text-sm">Hostinger SQLite Se Real-Time Data Sync Ho Chuka Hai!</p>
+              <p>Mails: <b class="text-white">${res.accounts?.length || 0}</b> | Orders: <b class="text-white">${res.orders?.length || 0}</b></p>
+              <p>Payments: <b class="text-white">${res.payments?.length || 0}</b> | Deductions: <b class="text-white">${res.replacements?.length || 0}</b></p>
+            </div>`
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('Live sync error:', err);
+    } finally {
+      setIsSyncingLive(false);
+    }
+  }, []);
+
+  const handleUpdateMaintenance = useCallback(async (settings: MaintenanceSettings) => {
+    setMaintenance(settings);
+    try {
+      await updateMaintenanceOnLive(settings.enabled, settings.message);
+      addLog('MAINTENANCE_SYNC', `Hostinger live maintenance mode: ${settings.enabled ? 'ENABLED' : 'DISABLED'}`);
+    } catch (err) {
+      console.warn('Failed to update maintenance on Hostinger:', err);
+    }
+  }, [addLog]);
+
+  // Initial and periodic background sync with Hostinger live database (every 20s)
+  useEffect(() => {
+    syncWithLiveDatabase(true);
+    const syncInterval = setInterval(() => {
+      syncWithLiveDatabase(true);
+    }, 20000);
+    return () => clearInterval(syncInterval);
+  }, [syncWithLiveDatabase]);
 
   return (
     <div className="relative min-h-screen flex flex-col justify-between selection:bg-cyan-500/30 selection:text-cyan-200">
@@ -294,8 +362,11 @@ export default function App() {
               onReplacementsUpdate={setReplacements}
               onAddLog={addLog}
               maintenance={maintenance}
-              onUpdateMaintenance={setMaintenance}
+              onUpdateMaintenance={handleUpdateMaintenance}
               onOpenClientPreview={() => setAdminClientPreview(true)}
+              onSyncWithLive={() => syncWithLiveDatabase(false)}
+              isSyncing={isSyncingLive}
+              lastSyncedAt={lastLiveSyncAt}
             />
           )
         )}
@@ -323,6 +394,8 @@ export default function App() {
         lastChecked={lastHostingerCheck}
         onRefresh={checkHostingerConnection}
         isChecking={isCheckingHostinger}
+        onTriggerFullSync={() => syncWithLiveDatabase(false)}
+        isSyncingLive={isSyncingLive}
       />
     </div>
   );

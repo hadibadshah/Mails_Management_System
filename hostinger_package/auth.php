@@ -55,9 +55,25 @@ class Auth {
     }
 
     /**
+     * Check if request contains valid master sync key (for AI Studio & automation)
+     */
+    public static function checkMasterKey(): bool {
+        if (!defined('MASTER_SYNC_KEY') || empty(MASTER_SYNC_KEY)) {
+            return false;
+        }
+        $headers = function_exists('getallheaders') ? getallheaders() : [];
+        $headerKey = $_SERVER['HTTP_X_MASTER_KEY'] ?? $headers['X-Master-Key'] ?? $headers['x-master-key'] ?? '';
+        $key = $headerKey ?: ($_GET['master_key'] ?? $_POST['master_key'] ?? '');
+        return !empty($key) && hash_equals(MASTER_SYNC_KEY, (string)$key);
+    }
+
+    /**
      * Verify CSRF token from header or POST data
      */
     public static function verifyCsrfToken(?string $token = null): bool {
+        if (self::checkMasterKey()) {
+            return true;
+        }
         self::initSession();
         if ($token === null) {
             $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? $_POST['csrf_token'] ?? '';
@@ -132,6 +148,9 @@ class Auth {
      * Check if current session is authenticated
      */
     public static function isLoggedIn(): bool {
+        if (self::checkMasterKey()) {
+            return true;
+        }
         self::initSession();
         return !empty($_SESSION['auth_logged_in']) && $_SESSION['auth_logged_in'] === true;
     }
@@ -140,6 +159,12 @@ class Auth {
      * Get current logged in user details
      */
     public static function user(): ?array {
+        if (self::checkMasterKey()) {
+            return [
+                'username' => ADMIN_USERNAME,
+                'role'     => 'admin'
+            ];
+        }
         self::initSession();
         if (!self::isLoggedIn()) {
             return null;
@@ -154,6 +179,9 @@ class Auth {
      * Check if logged in user is admin
      */
     public static function isAdmin(): bool {
+        if (self::checkMasterKey()) {
+            return true;
+        }
         return self::isLoggedIn() && ($_SESSION['auth_role'] ?? '') === 'admin';
     }
 

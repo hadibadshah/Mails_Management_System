@@ -43,6 +43,17 @@ import {
 } from '../types';
 import { SAMPLE_CSV_DATA, MANAGED_DOMAINS } from '../data/constants';
 import { cyberAlertError, cyberAlertSuccess } from '../utils/cyberSwal';
+import {
+  uploadCsvToLive,
+  saveOrderToLive,
+  deleteOrderOnLive,
+  savePaymentToLive,
+  deletePaymentOnLive,
+  addReplacementsToLive,
+  deleteReplacementOnLive,
+  revertOrderToStockOnLive,
+  bulkAccountActionOnLive
+} from '../services/hostingerService';
 
 interface AdminDashboardProps {
   accounts: EmailAccount[];
@@ -57,6 +68,9 @@ interface AdminDashboardProps {
   maintenance?: MaintenanceSettings;
   onUpdateMaintenance?: (settings: MaintenanceSettings) => void;
   onOpenClientPreview?: () => void;
+  onSyncWithLive?: () => void;
+  isSyncing?: boolean;
+  lastSyncedAt?: Date | null;
 }
 
 export default function AdminDashboard({
@@ -71,7 +85,10 @@ export default function AdminDashboard({
   onAddLog,
   maintenance,
   onUpdateMaintenance,
-  onOpenClientPreview
+  onOpenClientPreview,
+  onSyncWithLive,
+  isSyncing,
+  lastSyncedAt
 }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<'inventory' | 'orders' | 'payments' | 'replacements' | 'finder'>('inventory');
   const [csvText, setCsvText] = useState('');
@@ -80,7 +97,6 @@ export default function AdminDashboard({
   const [statusFilter, setStatusFilter] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [showDeployModal, setShowDeployModal] = useState(false);
 
   // Modal for inspecting order in Admin
   const [viewingOrder, setViewingOrder] = useState<OrderRecord | null>(null);
@@ -337,6 +353,15 @@ export default function AdminDashboard({
             <p class="text-slate-400">Client ab inko portal se extract kar sakta hai.</p>
           </div>`
         );
+
+        // 2-Way Live Sync: Send CSV directly to Hostinger live SQLite database
+        const generatedCsv = 'email,password,recovery_email\n' + parsedUploadAccounts.map((a) => `${a.email},${a.password},${a.recovery_email || ''}`).join('\n');
+        uploadCsvToLive(generatedCsv, 'make_available').then((liveRes) => {
+          if (liveRes && liveRes.success) {
+            onAddLog('HOSTINGER_LIVE_SYNC', `Hostinger live: ${liveRes.inserted || 0} inserted, ${liveRes.updated || 0} updated.`);
+            if (onSyncWithLive) onSyncWithLive();
+          }
+        }).catch((err) => console.warn('Live hostinger upload notice:', err));
       } else {
         // INGEST AS SOLD ORDER
         const finalDate = allocOrderDate ? allocOrderDate.replace('T', ' ') + ':00' : nowStr;
@@ -417,6 +442,24 @@ export default function AdminDashboard({
             <p class="text-slate-400 text-[11px]">CSV Downloadable hai aur Khata me update ho gaya hai.</p>
           </div>`
         );
+
+        // 2-Way Live Sync: Send Sold Order directly to Hostinger
+        const generatedCsv = 'email,password,recovery_email\n' + parsedUploadAccounts.map((a) => `${a.email},${a.password},${a.recovery_email || ''}`).join('\n');
+        uploadCsvToLive(generatedCsv, 'make_downloaded').then(() => {
+          saveOrderToLive({
+            order_number: orderNum,
+            domain: primaryDomain,
+            rate_per_mail: orderRate,
+            total_price: orderTotal,
+            notes: allocOrderNotes.trim(),
+            csv_text: generatedCsv
+          }).then((oRes) => {
+            if (oRes && oRes.success) {
+              onAddLog('HOSTINGER_LIVE_SYNC', `Hostinger live order sync: ${orderNum}`);
+              if (onSyncWithLive) onSyncWithLive();
+            }
+          }).catch((err) => console.warn('Live hostinger order sync notice:', err));
+        }).catch((err) => console.warn('Live hostinger csv upload notice:', err));
       }
 
       setCsvText('');
@@ -510,6 +553,11 @@ export default function AdminDashboard({
       setSelectedAccountIds(new Set());
       onAddLog('BULK_AVAILABLE', `Admin ne ${targetList.length} accounts ko 'Available' stock me revert kar diya.`);
       cyberAlertSuccess('Bulk Update Complete', `${targetList.length} accounts ab 'Available' stock me shamil hain.`);
+
+      // 2-Way Live Sync
+      bulkAccountActionOnLive(targetList.map((a) => a.email), 'make_available').then((res) => {
+        if (res && res.success && onSyncWithLive) onSyncWithLive();
+      }).catch((e) => console.warn('Live bulk make_available notice:', e));
     }
   };
 
@@ -522,6 +570,11 @@ export default function AdminDashboard({
       setSelectedAccountIds(new Set());
       onAddLog('BULK_DELETE', `Admin ne ${targetList.length} accounts delete kar diye.`);
       cyberAlertSuccess('Bulk Delete Complete', `${targetList.length} accounts delete ho gaye.`);
+
+      // 2-Way Live Sync
+      bulkAccountActionOnLive(targetList.map((a) => a.email), 'delete').then((res) => {
+        if (res && res.success && onSyncWithLive) onSyncWithLive();
+      }).catch((e) => console.warn('Live bulk delete notice:', e));
     }
   };
 
@@ -624,6 +677,11 @@ export default function AdminDashboard({
       `
     );
 
+    // 2-Way Live Sync
+    revertOrderToStockOnLive(order.id, revertDeleteOrder, revertNewPasswordsCsv).then((res) => {
+      if (res && res.success && onSyncWithLive) onSyncWithLive();
+    }).catch((e) => console.warn('Live revert notice:', e));
+
     setRevertingOrder(null);
   };
 
@@ -701,9 +759,9 @@ export default function AdminDashboard({
 
     if (editingOrderId) {
       // Edit existing order metadata
+      const rate = orderModalRate || 18;
       const updated = orders.map((o) => {
         if (o.id === editingOrderId) {
-          const rate = orderModalRate || 18;
           return {
             ...o,
             order_number: orderModalNumber.trim(),
@@ -719,6 +777,18 @@ export default function AdminDashboard({
       onAddLog('ORDER_UPDATED', `Admin ne order update kiya: ${orderModalNumber}`);
       cyberAlertSuccess('Order Updated', `${orderModalNumber} update ho chuka hai.`);
       setShowOrderModal(false);
+
+      // 2-Way Live Sync
+      saveOrderToLive({
+        order_id: editingOrderId,
+        order_number: orderModalNumber.trim(),
+        created_at: orderModalDate,
+        rate_per_mail: rate,
+        notes: orderModalNotes
+      }).then((res) => {
+        if (res && res.success && onSyncWithLive) onSyncWithLive();
+      }).catch((e) => console.warn('Live order edit notice:', e));
+
       return;
     }
 
@@ -787,6 +857,19 @@ export default function AdminDashboard({
     onAddLog('ORDER_INGESTED', `Order Ingest kiya: ${newOrd.order_number} (${qty} mails)`);
     cyberAlertSuccess('Order Ingested', `${newOrd.order_number} kamyabi se Khata me add ho gaya.`);
     setShowOrderModal(false);
+
+    // 2-Way Live Sync
+    saveOrderToLive({
+      order_number: newOrd.order_number,
+      domain: orderModalDomain,
+      rate_per_mail: rate,
+      total_price: qty * rate,
+      notes: orderModalNotes,
+      created_at: dateStr,
+      csv_text: orderModalCsv
+    }).then((res) => {
+      if (res && res.success && onSyncWithLive) onSyncWithLive();
+    }).catch((e) => console.warn('Live order create notice:', e));
   };
 
   const handleDeleteOrder = (orderId: number, orderNum: string) => {
@@ -806,6 +889,11 @@ export default function AdminDashboard({
       onOrdersUpdate(orders.filter((o) => o.id !== orderId));
       onAddLog('ORDER_DELETED', `Admin ne ${orderNum} delete kar diya aur mails wapis Available stock me move kar di.`);
       cyberAlertSuccess('Order Deleted', `${orderNum} delete ho gaya hai aur iski mails wapis Available stock me shamil ho gayi hain.`);
+
+      // 2-Way Live Sync
+      deleteOrderOnLive(orderId).then((res) => {
+        if (res && res.success && onSyncWithLive) onSyncWithLive();
+      }).catch((e) => console.warn('Live order delete notice:', e));
     }
   };
 
@@ -823,6 +911,16 @@ export default function AdminDashboard({
     );
     onAddLog('ORDER_PRICE_UPDATED', `Admin ne ${orderNum} ka rate Rs. ${newRate} (Total: Rs. ${newTotal}) update kiya.`);
     cyberAlertSuccess('Price Updated', `${orderNum} ka rate Rs. ${newRate} aur total Rs. ${newTotal.toLocaleString()} update ho gaya.`);
+
+    // 2-Way Live Sync
+    saveOrderToLive({
+      order_id: orderId,
+      order_number: orderNum,
+      rate_per_mail: newRate,
+      total_price: newTotal
+    }).then((res) => {
+      if (res && res.success && onSyncWithLive) onSyncWithLive();
+    }).catch((e) => console.warn('Live quick rate notice:', e));
   };
 
   const handleToggleOrderStatus = (orderId: number, newStatus: 'delivered' | 'reverted') => {
@@ -978,6 +1076,18 @@ export default function AdminDashboard({
       onAddLog('PAYMENT_UPDATED', `Payment update hui: Rs. ${amt}`);
       cyberAlertSuccess('Payment Updated', `Payment Rs. ${amt} update ho gayi.`);
       setShowPaymentModal(false);
+
+      // 2-Way Live Sync
+      savePaymentToLive({
+        id: editingPaymentId,
+        amount: amt,
+        payment_date: paymentModalDate || new Date().toISOString().substring(0, 10),
+        payment_method: paymentModalMethod,
+        reference_note: paymentModalNote
+      }).then((res) => {
+        if (res && res.success && onSyncWithLive) onSyncWithLive();
+      }).catch((e) => console.warn('Live payment edit notice:', e));
+
       return;
     }
 
@@ -995,6 +1105,16 @@ export default function AdminDashboard({
     onAddLog('PAYMENT_RECORDED', `Payment record hui: Rs. ${amt} (${paymentModalMethod})`);
     cyberAlertSuccess('Payment Recorded', `Rs. ${amt} wasooli ledger me add ho gayi.`);
     setShowPaymentModal(false);
+
+    // 2-Way Live Sync
+    savePaymentToLive({
+      amount: amt,
+      payment_date: paymentModalDate || new Date().toISOString().substring(0, 10),
+      payment_method: paymentModalMethod,
+      reference_note: paymentModalNote
+    }).then((res) => {
+      if (res && res.success && onSyncWithLive) onSyncWithLive();
+    }).catch((e) => console.warn('Live payment save notice:', e));
   };
 
   const handleDeletePayment = (payId: number) => {
@@ -1002,6 +1122,11 @@ export default function AdminDashboard({
       onPaymentsUpdate(payments.filter((p) => p.id !== payId));
       onAddLog('PAYMENT_DELETED', `Payment ID ${payId} delete kar di gayi.`);
       cyberAlertSuccess('Payment Deleted', 'Payment record remove kar diya gaya.');
+
+      // 2-Way Live Sync
+      deletePaymentOnLive(payId).then((res) => {
+        if (res && res.success && onSyncWithLive) onSyncWithLive();
+      }).catch((e) => console.warn('Live payment delete notice:', e));
     }
   };
 
@@ -1056,6 +1181,11 @@ export default function AdminDashboard({
     cyberAlertSuccess('Replacements Recorded', `${unique.length} mails deduct ho gayi hain aur -Rs. ${unique.length * rate} bill se minus ho gaya.`);
     setShowReplacementModal(false);
     setReplacementModalEmails('');
+
+    // 2-Way Live Sync
+    addReplacementsToLive(unique, rate, replacementModalReason).then((res) => {
+      if (res && res.success && onSyncWithLive) onSyncWithLive();
+    }).catch((e) => console.warn('Live replacement add notice:', e));
   };
 
   const handleDeleteReplacement = (repId: number) => {
@@ -1063,6 +1193,11 @@ export default function AdminDashboard({
       onReplacementsUpdate(replacements.filter((r) => r.id !== repId));
       onAddLog('REPLACEMENT_DELETED', `Replacement ID ${repId} delete ho gaya.`);
       cyberAlertSuccess('Deleted', 'Replacement deduction remove ho gayi.');
+
+      // 2-Way Live Sync
+      deleteReplacementOnLive(repId).then((res) => {
+        if (res && res.success && onSyncWithLive) onSyncWithLive();
+      }).catch((e) => console.warn('Live replacement delete notice:', e));
     }
   };
 
@@ -1243,23 +1378,18 @@ export default function AdminDashboard({
             <span>Download Statement</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setShowDeployModal(true)}
-            className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-300 text-xs font-mono flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm"
-          >
-            <Server className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Hostinger Deploy Guide</span>
-          </button>
-
-          <a
-            href="/hadi_digital_hostinger.zip"
-            download="hadi_digital_hostinger.zip"
-            className="px-3 py-2 rounded-xl bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-500/40 text-cyan-300 text-xs font-mono flex items-center space-x-1.5 transition-all cursor-pointer"
-          >
-            <FolderArchive className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Hostinger ZIP</span>
-          </a>
+          {onSyncWithLive && (
+            <button
+              type="button"
+              onClick={onSyncWithLive}
+              disabled={isSyncing}
+              className="px-3 py-2 rounded-xl bg-cyan-950/70 hover:bg-cyan-900/90 border border-cyan-500/50 text-cyan-300 text-xs font-mono flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
+              title="Sync all accounts, orders, payments with Hostinger Live Database"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Syncing Live...' : 'Sync Live Site'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -2816,89 +2946,6 @@ export default function AdminDashboard({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Hostinger Deployment Guide Modal */}
-      {showDeployModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl">
-            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-              <div className="flex items-center space-x-2">
-                <Server className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-base font-bold text-white">Hostinger Deployment Guide (asim.eztoolbox.xyz)</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowDeployModal(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs text-slate-300 custom-scroll font-mono">
-              <div className="p-3.5 rounded-xl bg-cyan-950/30 border border-cyan-500/30 text-cyan-200">
-                <p className="font-bold text-sm text-cyan-300 mb-1">Subdomain Setup Complete</p>
-                <p>Subdomain: <b className="text-white">asim.eztoolbox.xyz</b></p>
-                <p>Hostinger Folder: <b className="text-white">public_html/asim/</b></p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <div className="text-white font-bold mb-1 text-sm flex items-center space-x-1.5">
-                    <span className="w-5 h-5 rounded-full bg-cyan-500 text-slate-950 flex items-center justify-center text-xs">1</span>
-                    <span>Download ZIP Package</span>
-                  </div>
-                  <p className="text-slate-400">
-                    Hostinger deployment package ko download karein jisme تمام PHP files (.htaccess, db.php, api.php, auth.php, config.php, index.php) tayar hain.
-                  </p>
-                  <div className="mt-2">
-                    <a
-                      href="/hadi_digital_hostinger.zip"
-                      download="hadi_digital_hostinger.zip"
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Download hadi_digital_hostinger.zip</span>
-                    </a>
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <div className="text-white font-bold mb-1 text-sm flex items-center space-x-1.5">
-                    <span className="w-5 h-5 rounded-full bg-cyan-500 text-slate-950 flex items-center justify-center text-xs">2</span>
-                    <span>Hostinger File Manager me Upload &amp; Extract</span>
-                  </div>
-                  <ol className="list-decimal list-inside space-y-1 text-slate-400 mt-1">
-                    <li>Hostinger hPanel me <b>File Manager</b> kholein.</li>
-                    <li><code className="text-cyan-300">public_html/asim</code> folder me jayein.</li>
-                    <li><code className="text-white">hadi_digital_hostinger.zip</code> upload karein aur <b>Extract</b> karein (ya sirf index.php, api.php, db.php replace karein).</li>
-                  </ol>
-                </div>
-
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <div className="text-white font-bold mb-1 text-sm flex items-center space-x-1.5">
-                    <span className="w-5 h-5 rounded-full bg-cyan-500 text-slate-950 flex items-center justify-center text-xs">3</span>
-                    <span>Browser me Open Karein</span>
-                  </div>
-                  <p className="text-slate-400">
-                    Visit: <a href="https://asim.eztoolbox.xyz" target="_blank" rel="noreferrer" className="text-cyan-400 underline">https://asim.eztoolbox.xyz</a>. Pehli dafa load hotay hi SQLite database automatically update ho jayegi.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-slate-800 bg-slate-950/70 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowDeployModal(false)}
-                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}

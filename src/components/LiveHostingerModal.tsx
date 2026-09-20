@@ -28,6 +28,8 @@ interface LiveHostingerModalProps {
   lastChecked: Date | null;
   onRefresh: () => Promise<void>;
   isChecking: boolean;
+  onTriggerFullSync?: () => Promise<void> | void;
+  isSyncingLive?: boolean;
 }
 
 export default function LiveHostingerModal({
@@ -38,7 +40,9 @@ export default function LiveHostingerModal({
   latencyMs,
   lastChecked,
   onRefresh,
-  isChecking
+  isChecking,
+  onTriggerFullSync,
+  isSyncingLive
 }: LiveHostingerModalProps) {
   if (!isOpen) return null;
 
@@ -184,6 +188,17 @@ export default function LiveHostingerModal({
 
           {/* Quick Action Buttons */}
           <div className="pt-2 flex flex-wrap gap-2.5">
+            {onTriggerFullSync && (
+              <button
+                onClick={() => onTriggerFullSync()}
+                disabled={isSyncingLive}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center space-x-2 transition cursor-pointer shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingLive ? 'animate-spin' : ''}`} />
+                <span>{isSyncingLive ? 'Syncing SQLite Database...' : 'Sync Full Live Data'}</span>
+              </button>
+            )}
+
             <button
               onClick={onRefresh}
               disabled={isChecking}

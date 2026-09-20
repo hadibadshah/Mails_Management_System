@@ -32,6 +32,9 @@ define('MANAGED_DOMAINS', [
     'adlover.site'
 ]);
 
+// Master API Key for 2-Way Real-time Sync with AI Studio & External Dashboard
+define('MASTER_SYNC_KEY', 'HADI_DIGITAL_MASTER_SYNC_KEY_2026');
+
 // App Settings
 define('APP_NAME', 'Hadi Digital Account Distribution Portal');
 define('SESSION_NAME', 'VAULT_SESS_ID');

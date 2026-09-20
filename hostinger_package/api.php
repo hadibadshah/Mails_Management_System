@@ -17,12 +17,25 @@ Auth::initSession();
 // Enable CORS for cross-origin sync with AI Studio and client apps
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-Master-Key');
 header('Access-Control-Allow-Credentials: true');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
+}
+
+// Parse JSON input if sent via fetch POST
+$rawBody = file_get_contents('php://input');
+if (!empty($rawBody)) {
+    $parsedJson = json_decode($rawBody, true);
+    if (is_array($parsedJson)) {
+        foreach ($parsedJson as $k => $v) {
+            if (!isset($_POST[$k])) {
+                $_POST[$k] = $v;
+            }
+        }
+    }
 }
 
 // Set default response headers for JSON
@@ -44,6 +57,69 @@ try {
     $pdo = Database::getConnection();
 
     switch ($action) {
+        // ==========================================
+        // Full Real-Time 2-Way Synchronization with AI Studio
+        // ==========================================
+        case 'full_sync':
+            if (!Auth::isAdmin()) {
+                respondJson(['success' => false, 'message' => 'Admin or Master Key required.'], 403);
+            }
+
+            // 1. All accounts (up to 5000)
+            $accountsStmt = $pdo->query("SELECT id, email, password, recovery_email, domain, status, created_at, downloaded_at, replaced_at FROM emails ORDER BY id DESC LIMIT 5000");
+            $accountsList = $accountsStmt->fetchAll();
+
+            // 2. All orders
+            $ordersStmt = $pdo->query("SELECT * FROM orders ORDER BY datetime(created_at) DESC, id DESC");
+            $ordersList = $ordersStmt->fetchAll();
+            foreach ($ordersList as &$o) {
+                $o['accounts'] = json_decode($o['accounts_json'], true) ?: [];
+                $o['rate_per_mail'] = (float)($o['rate_per_mail'] ?? 18.0);
+                $o['total_price'] = (float)($o['total_price'] ?? ($o['quantity'] * $o['rate_per_mail']));
+                $isReverted = (!empty($o['status']) && ($o['status'] === 'reverted' || $o['status'] === 'cancelled')) || (!empty($o['notes']) && strpos($o['notes'], '[REVERTED TO AVAILABLE STOCK]') !== false);
+                $o['status'] = $isReverted ? 'reverted' : ($o['status'] ?? 'delivered');
+                unset($o['accounts_json']);
+            }
+
+            // 3. All payments
+            $payStmt = $pdo->query("SELECT * FROM payments ORDER BY datetime(payment_date) DESC, id DESC");
+            $paymentsList = $payStmt->fetchAll();
+
+            // 4. All replacements
+            $repStmt = $pdo->query("SELECT * FROM replacements ORDER BY id DESC");
+            $replacementsList = $repStmt->fetchAll();
+
+            // 5. Audit logs (latest 50)
+            $logsStmt = $pdo->query("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 50");
+            $logsList = $logsStmt->fetchAll();
+
+            // 6. Maintenance mode
+            $maintMode = false;
+            $maintMsg = 'Portal Under Maintenance: Hum stock aur system upgrades kar rahe hain. Jald wapis aayenge!';
+            try {
+                $stmtM = $pdo->query("SELECT value FROM settings WHERE key = 'client_maintenance_mode'");
+                $maintMode = ($stmtM->fetchColumn() === '1');
+                $stmtMsg = $pdo->query("SELECT value FROM settings WHERE key = 'client_maintenance_message'");
+                $valMsg = $stmtMsg->fetchColumn();
+                if ($valMsg !== false && $valMsg !== null) {
+                    $maintMsg = (string)$valMsg;
+                }
+            } catch (Exception $e) {}
+
+            respondJson([
+                'success'       => true,
+                'server_time'   => date('Y-m-d H:i:s'),
+                'accounts'      => $accountsList,
+                'orders'        => $ordersList,
+                'payments'      => $paymentsList,
+                'replacements'  => $replacementsList,
+                'logs'          => $logsList,
+                'maintenance'   => [
+                    'enabled' => $maintMode,
+                    'message' => $maintMsg
+                ]
+            ]);
+            break;
         // ==========================================
         // Live Health & GitHub Deployment Verification Ping
         // ==========================================
